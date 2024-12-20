@@ -3,34 +3,52 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Forecasting Results</title>
+  <title>Forecast Results</title>
+
+  
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
 </head>
 <body>
   <div class="container mt-5">
-    <h1 class="text-center">Forecasting Results</h1>
-    <p class="text-center">Your forecasting results with 12.12 and Nataru effects are ready.</p>
-    
-
-    <!-- Menampilkan hasil dari forecasting ke dalam tabel -->
-    <div class="container mt-5">
-      <h2>Hasil Total Pengiriman</h2>
-      <div>
-          <!-- Menampilkan tabel hasil analisis -->
-          {{ tables|safe }}
-      </div>
-      <div class="text-center mt-3">
-        <a href="/" class="btn btn-primary mt-3">Kembali ke Halaman Utama</a>
-      </div>
+    <h1 class="text-center">Forecast Results</h1>
+    <div id="results">
+      {{ tables | safe }}
     </div>
-
-
-    <div class="text-center">
-      <a href="/download/forecast_results.csv" class="btn btn-success">Download Results</a>
+    <div class="mt-4">
+      <h3>Adjust Growth Percentage</h3>
+      <form id="growth-form">
+        <div class="mb-3">
+          <label for="growth" class="form-label">Enter Growth (%):</label>
+          <input type="number" step="0.01" class="form-control" id="growth" name="growth" required>
+        </div>
+        <button type="submit" class="btn btn-secondary">Update Results</button>
+      </form>
     </div>
-    <div class="text-center mt-3">
-      <a href="/" class="btn btn-secondary">Back to Home</a>
-    </div>
+    <a href="/download/forecast_results.csv" class="btn btn-primary mt-3">Download Results</a>
   </div>
+
+  <script>
+    // $("#growth-form").submit(function(e) {
+    //   e.preventDefault();
+    //   const growth = $("#growth").val();
+    //   $.post("/update-growth", { growth: growth }, function(data) {
+    //     $("#results").html(data.updated_table);
+    //   });
+    // });
+
+    $("#growth-form").submit(function(e) {
+        e.preventDefault();  // Mencegah form submit default
+        const growth = $("#growth").val();
+
+        $.post("/update-growth", { growth: growth }, function(data) {
+            $("#results").html(data.updated_table);  // Perbarui tabel hasil
+        }).fail(function(xhr) {
+            alert("Error: " + xhr.status + " - " + xhr.statusText);
+        });
+    });
+
+
+  </script>
 </body>
 </html>
