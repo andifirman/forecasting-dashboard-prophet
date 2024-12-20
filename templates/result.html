@@ -4,51 +4,81 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Forecast Results</title>
-
   
+  <!-- CSS Bootstrap -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+  <!-- jQuery -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+  <style>
+    /* Styling tambahan untuk tabel */
+    .table th {
+      text-align: center;
+      background-color: #f8f9fa;
+      font-weight: bold;
+    }
+    .table td {
+      text-align: right;
+    }
+    .table td:first-child, .table th:first-child {
+      text-align: left;
+    }
+    .table-hover tbody tr:hover {
+      background-color: #f1f1f1;
+    }
+    .table-container {
+      margin-top: 20px;
+    }
+  </style>
 </head>
 <body>
   <div class="container mt-5">
-    <h1 class="text-center">Forecast Results</h1>
-    <div id="results">
-      {{ tables | safe }}
+    <h1 class="text-center mb-4">Forecast Results</h1>
+
+    <!-- Tabel Hasil Forecast -->
+    <div id="results" class="table-responsive">
+      <table class="table table-bordered table-striped table-hover">
+        {{ tables | safe }}
+      </table>
     </div>
+
+    <!-- Form untuk Mengatur Growth -->
     <div class="mt-4">
-      <h3>Adjust Growth Percentage</h3>
+      <h3 class="text-center">Adjust Growth Percentage</h3>
       <form id="growth-form">
         <div class="mb-3">
           <label for="growth" class="form-label">Enter Growth (%):</label>
-          <input type="number" step="0.01" class="form-control" id="growth" name="growth" required>
+          <input type="number" step="0.01" class="form-control" id="growth" name="growth" placeholder="Enter growth percentage..." required>
         </div>
-        <button type="submit" class="btn btn-secondary">Update Results</button>
+        <div class="text-center">
+          <button type="submit" class="btn btn-success">Update Results</button>
+        </div>
       </form>
     </div>
-    <a href="/download/forecast_results.csv" class="btn btn-primary mt-3">Download Results</a>
+
+    <!-- Tombol Download -->
+    <div class="text-center mt-3">
+      <a href="/download/forecast_results.csv" class="btn btn-primary">Download Results</a>
+    </div>
+
+    <!-- Tombol Back -->
+    <div class="text-center mt-3">
+      <a href="/" class="btn btn-secondary">Back to Previous Page</a>
+    </div>
   </div>
 
   <script>
-    // $("#growth-form").submit(function(e) {
-    //   e.preventDefault();
-    //   const growth = $("#growth").val();
-    //   $.post("/update-growth", { growth: growth }, function(data) {
-    //     $("#results").html(data.updated_table);
-    //   });
-    // });
-
+    // JavaScript untuk update tabel berdasarkan growth
     $("#growth-form").submit(function(e) {
         e.preventDefault();  // Mencegah form submit default
         const growth = $("#growth").val();
 
+        // AJAX untuk mengirim growth ke server
         $.post("/update-growth", { growth: growth }, function(data) {
             $("#results").html(data.updated_table);  // Perbarui tabel hasil
         }).fail(function(xhr) {
             alert("Error: " + xhr.status + " - " + xhr.statusText);
         });
     });
-
-
   </script>
 </body>
 </html>
