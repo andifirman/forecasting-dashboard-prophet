@@ -1,13 +1,9 @@
-# Library untuk pembacaan file dan template website
 import os
 from flask import Flask, render_template, request, redirect, url_for, send_file, jsonify
-
-# Library untuk melakukan analisis dan forecasting
 import pandas as pd
 import matplotlib.pyplot as plt
 from prophet import Prophet
-import matplotlib.dates as mdates
-
+import random
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
@@ -15,14 +11,10 @@ RESULT_FOLDER = 'results'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULT_FOLDER, exist_ok=True)
 
-
-
 # Variabel global untuk menyimpan hasil forecast
 forecast_results = {}
 result_df = None
-
-
-
+base_forecast_df = None
 
 @app.route('/')
 def index():
@@ -30,7 +22,7 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    global result_df, base_forecast_df  # Tambahkan base_forecast_df
+    global result_df, base_forecast_df
 
     # Proses file upload
     if 'file' not in request.files:
@@ -60,12 +52,10 @@ def analyze():
 
     # Preprocessing data
     data['DATE'] = pd.to_datetime(data['DATE'])
-    start_date = f"{year}-12-01"
-    end_date = f"{year}-12-31"
-    all_forecasting = data[data['DATE'] <= start_date]
+    all_forecasting = data[data['DATE'] <= '2024-12-01']
     all_forecasting = all_forecasting.rename(columns={"DATE": "ds", "Connote": "y"})
 
-    # Event khusus
+    # Menambahkan event khusus
     events = pd.DataFrame({
         'holiday': ['12.12', 'Hari Raya Natal'],
         'ds': [f"{year}-12-12", f"{year}-12-25"],
@@ -78,45 +68,58 @@ def analyze():
         city_data = all_forecasting[all_forecasting['Origin City'] == city_name]
         city_data = city_data.groupby('ds').agg({"y": "sum"}).reset_index()
 
-        model = Prophet(holidays=events, changepoint_prior_scale=1)
+        model = Prophet(holidays=events, changepoint_prior_scale=0.1)
         model.fit(city_data)
 
         future = model.make_future_dataframe(periods=31)
         forecast = model.predict(future)
 
-        # Data Desember
-        december_forecast = forecast[(forecast['ds'] >= start_date) & (forecast['ds'] <= end_date)]
-        return december_forecast
+        # Filter data Desember
+        december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
+        total_forecast = december_forecast['yhat'].sum()
+        return total_forecast, december_forecast
 
-    # Forecast semua Origin City
+    # Forecasting per Origin City
     origin_cities = all_forecasting['Origin City'].unique()
-    forecast_results = {}
-    for city in origin_cities:
-        forecast_results[city] = forecast_origin_city(city, all_forecasting, events)
+    results = {}
+    december_forecasts = {}
 
-    # Data bulan November
+    for city in origin_cities:
+        total_forecast, december_forecast = forecast_origin_city(city, all_forecasting, events)
+        results[city] = total_forecast
+        december_forecasts[city] = december_forecast  # Simpan Desember forecast per kota
+
+    # Total pengiriman bulan November per Origin City
     november_start = f"{year}-11-01"
     november_end = f"{year}-11-30"
     november_data = data[(data['DATE'] >= november_start) & (data['DATE'] <= november_end)]
     total_november_per_city = november_data.groupby('Origin City')['Connote'].sum()
 
-    # Gabungkan hasil November dan Desember
+    # Gabungkan hasil November dan Desember ke dalam DataFrame
     result_df = pd.DataFrame({
         'Origin City': sorted(origin_cities),
         'November': [total_november_per_city.get(city, 0) for city in sorted(origin_cities)],
-        'Desember': [forecast_results[city]['yhat'].sum() for city in sorted(origin_cities)]
+        'Desember': [results[city] for city in sorted(origin_cities)]
     })
+
+    # Hitung Growth %
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
 
-    # Simpan baseline data (numerik) sebelum diformat
-    base_forecast_df = result_df.copy()
-
-    # Format ulang untuk tampilan
+    # Format angka agar lebih rapi
     result_df['November'] = result_df['November'].apply(lambda x: f"{x:,.0f}")
     result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{x:,.0f}")
     result_df['Growth %'] = result_df['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
 
-    return render_template('result.html', tables=[result_df.to_html(classes='table table-striped', index=False)])
+    # Simpan baseline data (numerik) sebelum diformat
+    base_forecast_df = result_df.copy()
+
+    # Total pengiriman bulan Desember berdasarkan forecasting
+    total_december_forecast = sum(results.values())
+
+    # Tampilkan hasil
+    return render_template('result.html', 
+                           tables=[result_df.to_html(classes='table table-striped', index=False)],
+                           total_december_forecast=f"{total_december_forecast:,.0f}")
 
 
 @app.route('/update-growth', methods=['POST'])
@@ -134,6 +137,11 @@ def update_growth():
         return jsonify({'error': 'Invalid growth value'}), 400
 
     try:
+        # Pastikan kolom Desember dan November adalah numerik
+        # Jika kolom Desember atau November masih berupa string, hapus koma dan konversi ke numerik
+        base_forecast_df['Desember'] = pd.to_numeric(base_forecast_df['Desember'].replace({',': ''}, regex=True), errors='coerce')
+        base_forecast_df['November'] = pd.to_numeric(base_forecast_df['November'].replace({',': ''}, regex=True), errors='coerce')
+
         # Gunakan data asli (numerik) dari base_forecast_df
         result_df['Desember'] = base_forecast_df['Desember'] * (1 + growth / 100)
         result_df['Growth %'] = ((result_df['Desember'] - base_forecast_df['November']) /
@@ -150,10 +158,7 @@ def update_growth():
         print(f"Error while updating growth: {e}")  # Debug log
         return jsonify({'error': 'Internal Server Error'}), 500
 
-    # Kirim data hasil analisis ke template
-    # return render_template('result.html', tables=[result_df.to_html(classes='table table-striped', index=False).strip().replace('\n', '')])
-    
-    
+
 @app.route('/download/<filename>')
 def download_file(filename):
     return send_file(os.path.join(RESULT_FOLDER, filename), as_attachment=True)
