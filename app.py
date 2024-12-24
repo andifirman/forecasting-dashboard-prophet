@@ -105,6 +105,18 @@ def analyze():
     # Hitung Growth %
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
 
+    # Terapkan batas minimum growth (-12%)
+    growth_min = -12  # Minimum growth yang diizinkan
+
+    def apply_growth_limit(row):
+        if row['Growth %'] < growth_min:
+            adjusted_forecast = row['November'] * (1 + growth_min / 100)
+            return adjusted_forecast
+        return row['Desember']
+
+    result_df['Desember'] = result_df.apply(apply_growth_limit, axis=1)
+    result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
+
     # Format angka agar lebih rapi
     result_df['November'] = result_df['November'].apply(lambda x: f"{x:,.0f}")
     result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{x:,.0f}")
@@ -117,8 +129,8 @@ def analyze():
     total_december_forecast = sum(results.values())
 
     # Tampilkan hasil
-    return render_template('result.html', 
-                           tables=[result_df.to_html(classes='table table-striped', index=False)],
+    return render_template('result.html', \
+                           tables=[result_df.to_html(classes='table table-striped', index=False)],\
                            total_december_forecast=f"{total_december_forecast:,.0f}")
 
 
