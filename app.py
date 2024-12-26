@@ -1,9 +1,24 @@
+# Library untuk menangani semua aktivitas yang berkaitan dengan OS
+# Seperti membaca dataset dari sebuah direktori 
 import os
+
+# Library untuk framework Flask dan beberapa utility yang dibutuhkan
 from flask import Flask, render_template, request, redirect, url_for, send_file, jsonify
+
+# Library untuk melakukan manipulasi terhadap dataset
 import pandas as pd
-import matplotlib.pyplot as plt
+
+# Library yang mengunggah model Prophet untuk melakukan forecasting
 from prophet import Prophet
+
 import random
+
+# Library untuk visualisasi data
+import plotly.express as px
+import plotly.io as pio
+import matplotlib.pyplot as plt
+
+
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
