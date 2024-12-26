@@ -85,31 +85,37 @@
 
 
   <script>
-    // JavaScript untuk update tabel berdasarkan growth
-    $("#growth-form").submit(function(e) {
-        e.preventDefault();  // Mencegah form submit default
-        const growth = $("#growth").val();
+      // JavaScript untuk update tabel berdasarkan growth
+      $("#growth-form").submit(function(e) {
+          e.preventDefault();  // Mencegah form submit default
+          const growth = $("#growth").val();
 
-        // AJAX untuk mengirim growth ke server
-        $.post("/update-growth", { growth: growth }, function(data) {
-            // Pastikan data yang diterima mengandung graph_data untuk memperbarui grafik
-            console.log(data);  // Debugging: cek apakah data.graph_data berisi data yang baru
-            
-            // Update tabel hasil
-            $("#results").html(data.updated_table);
-            
-            // Jika data.graph_html hanya HTML untuk grafik, gunakan .html untuk mengganti HTML konten
-            $('#graph_container').html(data.graph_html);
-            
-            // Update grafik menggunakan Plotly jika data.graph_data ada
-            if (data.graph_data) {
-                Plotly.react('graph_container', data.graph_data);
-            }
-        }).fail(function(xhr) {
-            alert("Error: " + xhr.status + " - " + xhr.statusText);
-        });
-    });
+          // AJAX untuk mengirim growth ke server
+          $.post("/update-growth", { growth: growth }, function(data) {
+              // Pastikan data yang diterima mengandung updated_table dan graph_html untuk memperbarui konten
+              console.log(data);  // Debugging: cek apakah data sudah sesuai
 
+              if (data.error) {
+                  alert("Error: " + data.error);
+                  return;
+              }
+              
+              // Update tabel hasil
+              $("#results").html(data.updated_table); // Perbarui tabel dengan updated_table yang baru
+              
+              // Update grafik dengan HTML baru
+              $('#graph_container').html(data.graph_html);  // Gantikan konten grafik di container
+
+              // Jika data.graph_data ada, kita bisa menggunakan Plotly untuk memperbarui grafik dengan data tersebut
+              if (data.graph_data) {
+                  // Pastikan data.graph_data ada dan valid
+                  Plotly.react('graph_container', data.graph_data);
+              }
+          }).fail(function(xhr) {
+              alert("Error: " + xhr.status + " - " + xhr.statusText);
+          });
+      });
   </script>
+
 </body>
 </html>

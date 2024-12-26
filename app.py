@@ -201,39 +201,65 @@ def analyze():
 
 @app.route('/update-growth', methods=['POST'])
 def update_growth():
-    global result_df, base_forecast_df  # Akses base_forecast_df
+    global result_df, base_forecast_df, forecast_data  # Akses base_forecast_df dan forecast_data
 
-    # Validasi: Pastikan base_forecast_df sudah diinisialisasi
     if base_forecast_df is None or base_forecast_df.empty:
         return jsonify({'error': 'No base forecast data available. Please run analysis first.'}), 400
 
     try:
         growth = float(request.form['growth'])
-        print(f"Growth value received: {growth}")  # Debugging
     except ValueError:
         return jsonify({'error': 'Invalid growth value'}), 400
 
     try:
-        # Pastikan kolom Desember dan November adalah numerik
-        # Jika kolom Desember atau November masih berupa string, hapus koma dan konversi ke numerik
+        # Pastikan data numeric diubah dengan benar
         base_forecast_df['Desember'] = pd.to_numeric(base_forecast_df['Desember'].replace({',': ''}, regex=True), errors='coerce')
         base_forecast_df['November'] = pd.to_numeric(base_forecast_df['November'].replace({',': ''}, regex=True), errors='coerce')
 
-        # Gunakan data asli (numerik) dari base_forecast_df
+        # Menghitung Desember dan Growth
         result_df['Desember'] = base_forecast_df['Desember'] * (1 + growth / 100)
-        result_df['Growth %'] = ((result_df['Desember'] - base_forecast_df['November']) /
-                                 base_forecast_df['November']) * 100
+        result_df['Growth %'] = ((result_df['Desember'] - base_forecast_df['November']) / base_forecast_df['November']) * 100
 
-        # Format ulang untuk tampilan
         result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{x:,.0f}")
         result_df['Growth %'] = result_df['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
 
-        # Kirim tabel yang diperbarui ke browser
+        # Pastikan Initial Shipments ada di forecast_data
+        if 'Initial Shipments' not in forecast_data.columns:
+            forecast_data['Initial Shipments'] = forecast_data['Forecasted Shipments']
+
+        # Resetkan Forecasted Shipments ke nilai awal sebelum growth
+        forecast_data['Forecasted Shipments'] = forecast_data['Initial Shipments'] * (1 + growth / 100)
+
+        # Membuat grafik baru
+        fig = px.line(
+            forecast_data,
+            x="Date",
+            y="Forecasted Shipments",
+            color="Origin City",
+            markers=True
+        )
+
+        fig.update_traces(text=None)
+        fig.update_layout(
+            title="Forecasted Shipments per Origin City (Desember 2024)",
+            xaxis_title="Date",
+            yaxis_title="Forecasted Shipments",
+            legend_title="Origin City",
+            uniformtext_minsize=10,
+            uniformtext_mode='hide',
+            yaxis=dict(tickformat=',.0f')
+        )
+
+        # Kirim tabel yang diperbarui dan grafik baru
         updated_table = result_df.to_html(classes='table table-striped', index=False)
-        return jsonify({'updated_table': updated_table})
+        graph_html = fig.to_html(full_html=False)
+        return jsonify({'updated_table': updated_table, 'graph_html': graph_html})
+
     except Exception as e:
-        print(f"Error while updating growth: {e}")  # Debug log
-        return jsonify({'error': 'Internal Server Error'}), 500
+        # Menampilkan error yang lebih spesifik
+        return jsonify({'error': str(e)}), 500
+
+
 
 
 @app.route('/download/<filename>')
