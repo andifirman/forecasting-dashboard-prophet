@@ -37,7 +37,7 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    global result_df, base_forecast_df
+    global result_df, base_forecast_df, forecast_data, total_december_forecast
 
     # Proses file upload
     if 'file' not in request.files:
@@ -143,10 +143,60 @@ def analyze():
     # Total pengiriman bulan Desember berdasarkan forecasting
     total_december_forecast = sum(results.values())
 
+    # Menggabungkan data forecasting dari semua Origin City
+    forecast_data = pd.DataFrame()
+    for city, df in december_forecasts.items():
+        df['Origin City'] = city
+        forecast_data = pd.concat([forecast_data, df])
+
+    # Format hasil agar lebih rapi
+    forecast_data['yhat'] = forecast_data['yhat'].apply(lambda x: round(x))
+    forecast_data = forecast_data.rename(columns={'ds': 'Date', 'yhat': 'Forecasted Shipments'})
+
+    # Total forecast per Origin City berdasarkan forecast harian Desember
+    total_forecast_per_city = forecast_data.groupby('Origin City')['Forecasted Shipments'].sum().reset_index()
+    total_forecast_per_city = total_forecast_per_city.rename(columns={'Forecasted Shipments': 'Total Forecasted Shipments'})
+
+    # Menggabungkan informasi jumlah forecast dengan data forecast
+    forecast_data = pd.merge(forecast_data, total_forecast_per_city, on='Origin City', how='left')
+
+    # Menampilkan jumlah forecast per Origin City
+    print(total_forecast_per_city)
+
+    # Membuat visualisasi Line Graph berdasarkan Tanggal dan Origin City
+    fig = px.line(
+        forecast_data,
+        x="Date",
+        y="Forecasted Shipments",
+        color="Origin City",
+        markers=True
+    )
+
+    # Menghilangkan teks yang muncul di sepanjang garis
+    fig.update_traces(text=None)
+
+    # Menambahkan layout untuk mempercantik grafik
+    fig.update_layout(
+        title="Forecasted Shipments per Origin City (Desember 2024)",
+        xaxis_title="Date",
+        yaxis_title="Forecasted Shipments",
+        legend_title="Origin City",
+        uniformtext_minsize=10,
+        uniformtext_mode='hide',
+        yaxis=dict(
+            tickformat=',.0f'  # Format angka dengan pemisah ribuan
+        )
+    )
+
+    # Menampilkan grafik di halaman web Flask
+    graph_html = fig.to_html(full_html=False)
+
     # Tampilkan hasil
     return render_template('result.html', \
                            tables=[result_df.to_html(classes='table table-striped', index=False)],\
-                           total_december_forecast=f"{total_december_forecast:,.0f}")
+                           total_december_forecast=f"{total_december_forecast:,.0f}", \
+                           graph_html=graph_html)
+
 
 
 @app.route('/update-growth', methods=['POST'])

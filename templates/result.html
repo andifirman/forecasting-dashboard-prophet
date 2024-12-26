@@ -10,7 +10,6 @@
   <!-- jQuery -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <style>
-    /* Styling tambahan untuk tabel */
     .table th {
       text-align: center;
       background-color: #f8f9fa;
@@ -44,6 +43,11 @@
       </table>
     </div>
 
+    <!-- Menampilkan grafik Plotly -->
+    <div id="graph_container">
+      {{ graph_html|safe }}
+  </div>
+
     <!-- Form untuk Mengatur Growth -->
     <div class="mt-4">
       <h3 class="text-center">Adjust Growth Percentage</h3>
@@ -58,6 +62,12 @@
       </form>
     </div>
 
+
+
+
+
+
+
     <!-- Tombol Download -->
     <div class="text-center mt-3">
       <a href="/download/forecast_results.csv" class="btn btn-primary">Download Results</a>
@@ -69,6 +79,11 @@
     </div>
   </div>
 
+
+
+
+
+
   <script>
     // JavaScript untuk update tabel berdasarkan growth
     $("#growth-form").submit(function(e) {
@@ -77,11 +92,24 @@
 
         // AJAX untuk mengirim growth ke server
         $.post("/update-growth", { growth: growth }, function(data) {
-            $("#results").html(data.updated_table);  // Perbarui tabel hasil
+            // Pastikan data yang diterima mengandung graph_data untuk memperbarui grafik
+            console.log(data);  // Debugging: cek apakah data.graph_data berisi data yang baru
+            
+            // Update tabel hasil
+            $("#results").html(data.updated_table);
+            
+            // Jika data.graph_html hanya HTML untuk grafik, gunakan .html untuk mengganti HTML konten
+            $('#graph_container').html(data.graph_html);
+            
+            // Update grafik menggunakan Plotly jika data.graph_data ada
+            if (data.graph_data) {
+                Plotly.react('graph_container', data.graph_data);
+            }
         }).fail(function(xhr) {
             alert("Error: " + xhr.status + " - " + xhr.statusText);
         });
     });
+
   </script>
 </body>
 </html>
