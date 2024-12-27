@@ -78,64 +78,21 @@ def analyze():
         'upper_window': [days_after_event, days_after_event]
     })
 
-    # Fungsi untuk melakukan forecasting per Origin City
-    def forecast_origin_city(city_name, all_forecasting, events, year=2024):
-        # Filter data per Origin City
+    # Fungsi untuk forecasting per Origin City
+    def forecast_origin_city(city_name, all_forecasting, events):
         city_data = all_forecasting[all_forecasting['Origin City'] == city_name]
         city_data = city_data.groupby('ds').agg({"y": "sum"}).reset_index()
 
-        # Inisialisasi Prophet
         model = Prophet(holidays=events, changepoint_prior_scale=0.1)
         model.fit(city_data)
 
-        # Forecast Desember
         future = model.make_future_dataframe(periods=31)
         forecast = model.predict(future)
 
-        # # Menambahkan growth adjustment (10%)
-        # forecast['yhat'] = forecast['yhat'] * 1.10
-
-        # Menyimpan minggu untuk setiap tanggal
-        forecast['week'] = forecast['ds'].dt.isocalendar().week
-
-        # Proses per minggu
-        for week, group in forecast.groupby('week'):
-            # Identifikasi nilai tertinggi dan tanggalnya
-            highest_value = group['yhat'].max()
-            highest_dates = group[group['yhat'] == highest_value]['ds']
-
-            # Cari nilai tertinggi kedua
-            second_highest_value = group[group['yhat'] < highest_value]['yhat'].max()
-
-            # Jika ada event tanggal 12 atau 25 di minggu tersebut, swap nilai
-            for event_date in ['2024-12-12', '2024-12-25']:
-                if pd.to_datetime(event_date).isocalendar().week == week:
-                    # Pastikan nilai tertinggi berpindah ke event
-                    forecast.loc[forecast['ds'] == event_date, 'yhat'] = highest_value
-
-                    # Update nilai tertinggi sebelumnya menjadi nilai tertinggi kedua
-                    if second_highest_value is not None:
-                        for date in highest_dates:
-                            if date != pd.to_datetime(event_date):
-                                forecast.loc[forecast['ds'] == date, 'yhat'] = second_highest_value
-                    
-                    # H+1: Turunkan nilai setidaknya 2%
-                    next_day = pd.to_datetime(event_date) + pd.Timedelta(days=1)
-                    if next_day in forecast['ds'].values:
-                        h1_value = highest_value * 0.98  # Turunkan 2%
-                        forecast.loc[forecast['ds'] == next_day, 'yhat'] = min(
-                            h1_value, forecast.loc[forecast['ds'] == next_day, 'yhat'].values[0]
-                        )
-
         # Filter data Desember
         december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
-
-        # Total forecast untuk Desember
         total_forecast = december_forecast['yhat'].sum()
-
-        # Return total forecast dan dataframe Desember forecast
         return total_forecast, december_forecast
-
 
     # Forecasting per Origin City
     origin_cities = all_forecasting['Origin City'].unique()
