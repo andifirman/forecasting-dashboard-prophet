@@ -101,9 +101,6 @@ def analyze():
         future = model.make_future_dataframe(periods=31)
         forecast = model.predict(future)
 
-        # # Menambahkan growth adjustment (10%)
-        # forecast['yhat'] = forecast['yhat'] * 1.10
-
         # Menyimpan minggu untuk setiap tanggal
         forecast['week'] = forecast['ds'].dt.isocalendar().week
 
@@ -172,22 +169,16 @@ def analyze():
     # Gantikan nilai negatif dalam kolom Desember dengan angka acak
     result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
 
-    # Hitung Growth %
+    # Hitung Growth % dan batas minimum growth (-12%)
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
-
-    # Terapkan batas minimum growth (-12%)
     growth_min = -12  # Minimum growth yang diizinkan
-
     def apply_growth_limit(row):
         if row['Growth %'] < growth_min:
             adjusted_forecast = row['November'] * (1 + growth_min / 100)
             return adjusted_forecast
         return row['Desember']
-
     result_df['Desember'] = result_df.apply(apply_growth_limit, axis=1)
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
-
-    # Gantikan nilai negatif dalam kolom Desember dengan angka acak setelah adjustment
     result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
 
     # Format angka agar lebih rapi
@@ -221,12 +212,22 @@ def analyze():
     # Menggabungkan informasi jumlah forecast dengan data forecast
     forecast_data = pd.merge(forecast_data, total_forecast_per_city, on='Origin City', how='left')
 
-    # Menampilkan jumlah forecast per Origin City
-    print(total_forecast_per_city)
-
     # Membuat visualisasi Line Graph berdasarkan Tanggal dan Origin City
     fig = go.Figure()
 
+    # Grafik untuk All Origin City
+    all_cities_data = forecast_data.groupby('Date')['Forecasted Shipments'].sum().reset_index()
+    fig.add_trace(go.Scatter(
+        x=all_cities_data['Date'],
+        y=all_cities_data['Forecasted Shipments'],
+        mode='lines+markers',
+        name='All Origin City',
+        visible=True,  # Semua trace ditampilkan awalnya
+        hovertemplate=("Date=%{x|%b %d, %Y}<br>"
+                       "Total Forecasted Shipments=%{y:,}<extra></extra>")
+    ))
+
+    # Grafik per Origin City
     for city in origin_cities:
         city_data = forecast_data[forecast_data['Origin City'] == city]
         fig.add_trace(go.Scatter(
@@ -245,9 +246,14 @@ def analyze():
 
     # Dropdown menu untuk memilih Origin City
     buttons = []
+    buttons.append(dict(label='All Origin Cities',
+                        method='update',
+                        args=[{'visible': [True] + [False] * len(origin_cities)},
+                              {'title': "Forecasted Shipments for All Origin Cities"}]))
+
     for i, city in enumerate(origin_cities):
-        visibility = [False] * len(origin_cities)
-        visibility[i] = True
+        visibility = [False] * (len(origin_cities) + 1)
+        visibility[i + 1] = True
         buttons.append(dict(label=city,
                             method='update',
                             args=[{'visible': visibility},
@@ -271,7 +277,6 @@ def analyze():
         yaxis=dict(tickformat=',.0f')
     )
 
-
     # Menampilkan grafik di halaman web Flask
     graph_html = fig.to_html(full_html=False)
 
@@ -280,6 +285,7 @@ def analyze():
                            tables=[result_df.to_html(classes='table table-striped', index=False)],\
                            total_december_forecast=f"{total_december_forecast:,.0f}", \
                            graph_html=graph_html)
+
 
 
 
@@ -322,6 +328,18 @@ def update_growth():
         # Membuat grafik baru dengan Dropdown Menu
         fig = go.Figure()
 
+        # Grafik untuk All Origin City
+        all_cities_data = forecast_data.groupby('Date')['Forecasted Shipments'].sum().reset_index()
+        fig.add_trace(go.Scatter(
+            x=all_cities_data['Date'],
+            y=all_cities_data['Forecasted Shipments'],
+            mode='lines+markers',
+            name='All Origin City',
+            visible=True,  # Menampilkan grafik untuk All Origin City
+            hovertemplate=("Date=%{x|%b %d, %Y}<br>"
+                           "Total Forecasted Shipments=%{y:,}<extra></extra>")
+        ))
+
         # Menambahkan trace untuk setiap kota
         for city in forecast_data['Origin City'].unique():
             city_data = forecast_data[forecast_data['Origin City'] == city]
@@ -341,9 +359,14 @@ def update_growth():
 
         # Membuat dropdown menu
         buttons = []
+        buttons.append(dict(label='All Origin Cities',
+                            method='update',
+                            args=[{'visible': [True] + [False] * len(forecast_data['Origin City'].unique())},
+                                  {'title': "Forecasted Shipments for All Origin Cities"}]))
+
         for i, city in enumerate(forecast_data['Origin City'].unique()):
-            visibility = [False] * len(forecast_data['Origin City'].unique())
-            visibility[i] = True  # Set hanya trace yang sesuai terlihat
+            visibility = [False] * (len(forecast_data['Origin City'].unique()) + 1)
+            visibility[i + 1] = True  # Set hanya trace yang sesuai terlihat
             buttons.append(dict(
                 label=city,
                 method='update',
@@ -380,6 +403,7 @@ def update_growth():
     except Exception as e:
         # Tangani error yang terjadi
         return jsonify({'error': str(e)}), 500
+
 
 
 

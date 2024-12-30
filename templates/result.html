@@ -10,6 +10,10 @@
   <!-- jQuery -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <style>
+    body{
+      padding-bottom: 20vh;
+    }
+
     .table th {
       text-align: center;
       background-color: #f8f9fa;
@@ -45,9 +49,27 @@
 
     <!-- Menampilkan grafik Plotly -->
     <div id="graph_container">
-      {{ graph_html|safe }}
-  </div>
+      {{ graph_html |safe }}
+    </div>
 
+
+    <!-- Form untuk Upload Data Aktual -->
+    <!-- <div class="mt-4">
+      <h3 class="text-center">Upload Actual Data</h3>
+      <form id="actual-data-form" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label for="actual_file" class="form-label">Upload Actual Data (CSV or Excel):</label>
+          <input type="file" class="form-control" id="actual_file" name="actual_file" accept=".csv, .xlsx" required> -->
+          <!-- <small class="form-text text-muted">Upload your actual shipment data to compare with forecasted data.</small> -->
+        <!-- </div>
+        <div class="text-center">
+          <button type="submit" class="btn btn-primary">Upload Actual Data</button>
+        </div>
+      </form>
+    </div> -->
+
+
+  
     <!-- Form untuk Mengatur Growth -->
     <div class="mt-4">
       <h3 class="text-center">Adjust Growth Percentage</h3>
@@ -113,6 +135,40 @@
               }
           }).fail(function(xhr) {
               alert("Error: " + xhr.status + " - " + xhr.statusText);
+          });
+      });
+
+      // JavaScript untuk Upload Data Aktual
+      $("#actual-data-form").submit(function(e) {
+          e.preventDefault();  // Mencegah pengiriman form default
+
+          // Ambil file data aktual
+          const formData = new FormData();
+          const actualFile = $("#actual_file")[0].files[0];
+          if (!actualFile) {
+              alert("Please upload an actual data file.");
+              return;
+          }
+          formData.append("actual_file", actualFile);
+
+          // Kirim data ke server
+          $.ajax({
+              url: "/upload-actual",
+              type: "POST",
+              data: formData,
+              processData: false,
+              contentType: false,
+              success: function(response) {
+                  if (response.graph_html) {
+                      // Perbarui grafik dengan HTML baru
+                      $("#graph_container").html(response.graph_html);
+                  } else {
+                      alert("Failed to update the graph. Please check your data.");
+                  }
+              },
+              error: function(xhr) {
+                  alert("Error: " + xhr.status + " - " + xhr.statusText);
+              }
           });
       });
   </script>
