@@ -36,6 +36,14 @@ base_forecast_df = None
 def index():
     return render_template('index.html')  # Menampilkan halaman upload
 
+# Ganti nilai negatif dengan angka acak antara 5 hingga 32
+def replace_negative_with_random(data, min_val=5, max_val=32):
+    """
+    Fungsi untuk mengganti nilai negatif dengan angka acak dalam rentang tertentu (5-32).
+    """
+    return [random.randint(min_val, max_val) if value < 0 else value for value in data]
+
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     global result_df, base_forecast_df, forecast_data, total_december_forecast
@@ -161,6 +169,9 @@ def analyze():
         'Desember': [results[city] for city in sorted(origin_cities)]
     })
 
+    # Gantikan nilai negatif dalam kolom Desember dengan angka acak
+    result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
+
     # Hitung Growth %
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
 
@@ -175,6 +186,9 @@ def analyze():
 
     result_df['Desember'] = result_df.apply(apply_growth_limit, axis=1)
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
+
+    # Gantikan nilai negatif dalam kolom Desember dengan angka acak setelah adjustment
+    result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
 
     # Format angka agar lebih rapi
     result_df['November'] = result_df['November'].apply(lambda x: f"{x:,.0f}")
@@ -192,6 +206,9 @@ def analyze():
     for city, df in december_forecasts.items():
         df['Origin City'] = city
         forecast_data = pd.concat([forecast_data, df])
+
+    # Gantikan nilai negatif dalam Forecasted Shipments dengan angka acak
+    forecast_data['yhat'] = replace_negative_with_random(forecast_data['yhat'])
 
     # Format hasil agar lebih rapi
     forecast_data['yhat'] = forecast_data['yhat'].apply(lambda x: round(x))
@@ -295,6 +312,9 @@ def update_growth():
         # Pastikan kolom `Initial Shipments` ada di forecast_data
         if 'Initial Shipments' not in forecast_data.columns:
             forecast_data['Initial Shipments'] = forecast_data['Forecasted Shipments']
+
+        # Resetkan Forecasted Shipments ke nilai awal sebelum growth
+        forecast_data['Forecasted Shipments'] = forecast_data['Initial Shipments'] * (1 + growth / 100)
 
         # Update `Forecasted Shipments` berdasarkan growth dengan pembulatan
         forecast_data['Forecasted Shipments'] = (forecast_data['Initial Shipments'] * (1 + growth / 100)).round()
