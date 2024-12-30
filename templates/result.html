@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Forecast Results</title>
-  
+
   <!-- CSS Bootstrap -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
   <!-- jQuery -->
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <style>
-    body{
+    body {
       padding-bottom: 20vh;
     }
 
@@ -34,6 +34,16 @@
     .graph-container {
       margin-top: 30px;
     }
+
+    /* Styling untuk spinner loading */
+    #loading {
+      display: none;
+      text-align: center;
+      margin-top: 20px;
+    }
+    #loading .spinner-border {
+      margin-top: 10px;
+    }
   </style>
 </head>
 <body>
@@ -49,27 +59,24 @@
 
     <!-- Menampilkan grafik Plotly -->
     <div id="graph_container">
-      {{ graph_html |safe }}
+      {{ graph_html | safe }}
     </div>
 
-
     <!-- Form untuk Upload Data Aktual -->
-    <!-- <div class="mt-4">
+    <div class="mt-4">
       <h3 class="text-center">Upload Actual Data</h3>
       <form id="actual-data-form" enctype="multipart/form-data">
         <div class="mb-3">
-          <label for="actual_file" class="form-label">Upload Actual Data (CSV or Excel):</label>
-          <input type="file" class="form-control" id="actual_file" name="actual_file" accept=".csv, .xlsx" required> -->
-          <!-- <small class="form-text text-muted">Upload your actual shipment data to compare with forecasted data.</small> -->
-        <!-- </div>
+          <label for="actual_data" class="form-label">Upload Actual Data (CSV or Excel):</label>
+          <input type="file" class="form-control" id="actual_data" name="actual_data" accept=".csv, .xlsx" required>
+          <small class="form-text text-muted">Upload your actual shipment data to compare with forecasted data.</small>
+        </div>
         <div class="text-center">
           <button type="submit" class="btn btn-primary">Upload Actual Data</button>
         </div>
       </form>
-    </div> -->
+    </div>
 
-
-  
     <!-- Form untuk Mengatur Growth -->
     <div class="mt-4">
       <h3 class="text-center">Adjust Growth Percentage</h3>
@@ -84,12 +91,6 @@
       </form>
     </div>
 
-
-
-
-
-
-
     <!-- Tombol Download -->
     <div class="text-center mt-3">
       <a href="/download/forecast_results.csv" class="btn btn-primary">Download Results</a>
@@ -99,78 +100,87 @@
     <div class="text-center mt-3">
       <a href="/" class="btn btn-secondary">Back to Previous Page</a>
     </div>
+
+    <!-- Loading Spinner -->
+    <div id="loading">
+      <div class="spinner-border" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+      <p>Processing your data, please wait...</p>
+    </div>
+
   </div>
 
-
-
-
-
-
   <script>
-      // JavaScript untuk update tabel berdasarkan growth
-      $("#growth-form").submit(function(e) {
-          e.preventDefault();  // Mencegah form submit default
-          const growth = $("#growth").val();
+    // JavaScript untuk update tabel berdasarkan growth
+    $("#growth-form").submit(function(e) {
+      e.preventDefault();  // Mencegah form submit default
+      const growth = $("#growth").val();
 
-          // AJAX untuk mengirim growth ke server
-          $.post("/update-growth", { growth: growth }, function(data) {
-              // Pastikan data yang diterima mengandung updated_table dan graph_html untuk memperbarui konten
-              console.log(data);  // Debugging: cek apakah data sudah sesuai
+      // AJAX untuk mengirim growth ke server
+      $.post("/update-growth", { growth: growth }, function(data) {
+        // Pastikan data yang diterima mengandung updated_table dan graph_html untuk memperbarui konten
+        console.log(data);  // Debugging: cek apakah data sudah sesuai
 
-              if (data.error) {
-                  alert("Error: " + data.error);
-                  return;
-              }
-              
-              // Update tabel hasil
-              $("#results").html(data.updated_table); // Perbarui tabel dengan updated_table yang baru
-              
-              // Update grafik dengan HTML baru
-              $('#graph_container').html(data.graph_html);  // Gantikan konten grafik di container
+        if (data.error) {
+          alert("Error: " + data.error);
+          return;
+        }
 
-              // Jika data.graph_data ada, kita bisa menggunakan Plotly untuk memperbarui grafik dengan data tersebut
-              if (data.graph_data) {
-                  // Pastikan data.graph_data ada dan valid
-                  Plotly.react('graph_container', data.graph_data);
-              }
-          }).fail(function(xhr) {
-              alert("Error: " + xhr.status + " - " + xhr.statusText);
-          });
+        // Update tabel hasil
+        $("#results").html(data.updated_table); // Perbarui tabel dengan updated_table yang baru
+
+        // Update grafik dengan HTML baru
+        $('#graph_container').html(data.graph_html);  // Gantikan konten grafik di container
+
+        // Jika data.graph_data ada, kita bisa menggunakan Plotly untuk memperbarui grafik dengan data tersebut
+        if (data.graph_data) {
+          // Pastikan data.graph_data ada dan valid
+          Plotly.react('graph_container', data.graph_data);
+        }
+      }).fail(function(xhr) {
+        alert("Error: " + xhr.status + " - " + xhr.statusText);
       });
+    });
 
-      // JavaScript untuk Upload Data Aktual
-      $("#actual-data-form").submit(function(e) {
-          e.preventDefault();  // Mencegah pengiriman form default
+    // JavaScript untuk Upload Data Aktual
+    $("#actual-data-form").submit(function(e) {
+      e.preventDefault();  // Mencegah pengiriman form default
 
-          // Ambil file data aktual
-          const formData = new FormData();
-          const actualFile = $("#actual_file")[0].files[0];
-          if (!actualFile) {
-              alert("Please upload an actual data file.");
-              return;
+      // Ambil file data aktual
+      const formData = new FormData();
+      const actualFile = $("#actual_data")[0].files[0];  // Mengubah ID menjadi 'actual_data'
+      if (!actualFile) {
+        alert("Please upload an actual data file.");
+        return;
+      }
+      formData.append("actual_data", actualFile);  // Mengirim dengan nama 'actual_data'
+
+      // Menampilkan loading spinner
+      $("#loading").show();
+
+      // Kirim data ke server
+      $.ajax({
+        url: "/compare-forecast-actual",  // Gunakan endpoint baru untuk perbandingan
+        type: "POST",
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(response) {
+          $("#loading").hide();  // Sembunyikan spinner
+          if (response.graph_html) {
+            // Perbarui grafik dengan HTML baru
+            $("#graph_container").html(response.graph_html);
+          } else {
+            alert("Failed to update the graph. Please check your data.");
           }
-          formData.append("actual_file", actualFile);
-
-          // Kirim data ke server
-          $.ajax({
-              url: "/upload-actual",
-              type: "POST",
-              data: formData,
-              processData: false,
-              contentType: false,
-              success: function(response) {
-                  if (response.graph_html) {
-                      // Perbarui grafik dengan HTML baru
-                      $("#graph_container").html(response.graph_html);
-                  } else {
-                      alert("Failed to update the graph. Please check your data.");
-                  }
-              },
-              error: function(xhr) {
-                  alert("Error: " + xhr.status + " - " + xhr.statusText);
-              }
-          });
+        },
+        error: function(xhr) {
+          $("#loading").hide();  // Sembunyikan spinner
+          alert("Error: " + xhr.status + " - " + xhr.statusText);
+        }
       });
+    });
   </script>
 
 </body>
