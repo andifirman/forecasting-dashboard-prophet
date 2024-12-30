@@ -17,6 +17,7 @@ import random
 import plotly.express as px
 import plotly.io as pio
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
 
 
@@ -34,17 +35,6 @@ base_forecast_df = None
 @app.route('/')
 def index():
     return render_template('index.html')  # Menampilkan halaman upload
-
-
-
-# Ganti nilai negatif dengan angka acak antara 5 hingga 32
-def replace_negative_with_random(data, min_val=5, max_val=32):
-    """
-    Fungsi untuk mengganti nilai negatif dengan angka acak dalam rentang tertentu (5-32).
-    """
-    return [random.randint(min_val, max_val) if value < 0 else value for value in data]
-
-
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -103,6 +93,41 @@ def analyze():
         future = model.make_future_dataframe(periods=31)
         forecast = model.predict(future)
 
+        # # Menambahkan growth adjustment (10%)
+        # forecast['yhat'] = forecast['yhat'] * 1.10
+
+        # Menyimpan minggu untuk setiap tanggal
+        forecast['week'] = forecast['ds'].dt.isocalendar().week
+
+        # Proses per minggu
+        for week, group in forecast.groupby('week'):
+            # Identifikasi nilai tertinggi dan tanggalnya
+            highest_value = group['yhat'].max()
+            highest_dates = group[group['yhat'] == highest_value]['ds']
+
+            # Cari nilai tertinggi kedua
+            second_highest_value = group[group['yhat'] < highest_value]['yhat'].max()
+
+            # Jika ada event tanggal 12 atau 25 di minggu tersebut, swap nilai
+            for event_date in ['2024-12-12', '2024-12-25']:
+                if pd.to_datetime(event_date).isocalendar().week == week:
+                    # Pastikan nilai tertinggi berpindah ke event
+                    forecast.loc[forecast['ds'] == event_date, 'yhat'] = highest_value
+
+                    # Update nilai tertinggi sebelumnya menjadi nilai tertinggi kedua
+                    if second_highest_value is not None:
+                        for date in highest_dates:
+                            if date != pd.to_datetime(event_date):
+                                forecast.loc[forecast['ds'] == date, 'yhat'] = second_highest_value
+                    
+                    # H+1: Turunkan nilai setidaknya 2%
+                    next_day = pd.to_datetime(event_date) + pd.Timedelta(days=1)
+                    if next_day in forecast['ds'].values:
+                        h1_value = highest_value * 0.98  # Turunkan 2%
+                        forecast.loc[forecast['ds'] == next_day, 'yhat'] = min(
+                            h1_value, forecast.loc[forecast['ds'] == next_day, 'yhat'].values[0]
+                        )
+
         # Filter data Desember
         december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
 
@@ -111,6 +136,7 @@ def analyze():
 
         # Return total forecast dan dataframe Desember forecast
         return total_forecast, december_forecast
+
 
     # Forecasting per Origin City
     origin_cities = all_forecasting['Origin City'].unique()
@@ -135,9 +161,6 @@ def analyze():
         'Desember': [results[city] for city in sorted(origin_cities)]
     })
 
-    # Gantikan nilai negatif dalam kolom Desember dengan angka acak
-    result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
-
     # Hitung Growth %
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
 
@@ -151,9 +174,7 @@ def analyze():
         return row['Desember']
 
     result_df['Desember'] = result_df.apply(apply_growth_limit, axis=1)
-
-    # Gantikan nilai negatif dalam kolom Desember dengan angka acak setelah adjustment
-    result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
+    result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
 
     # Format angka agar lebih rapi
     result_df['November'] = result_df['November'].apply(lambda x: f"{x:,.0f}")
@@ -172,21 +193,67 @@ def analyze():
         df['Origin City'] = city
         forecast_data = pd.concat([forecast_data, df])
 
-    # Gantikan nilai negatif dalam Forecasted Shipments dengan angka acak
-    forecast_data['yhat'] = replace_negative_with_random(forecast_data['yhat'])
-
     # Format hasil agar lebih rapi
     forecast_data['yhat'] = forecast_data['yhat'].apply(lambda x: round(x))
     forecast_data = forecast_data.rename(columns={'ds': 'Date', 'yhat': 'Forecasted Shipments'})
 
+    # Total forecast per Origin City berdasarkan forecast harian Desember
+    total_forecast_per_city = forecast_data.groupby('Origin City')['Forecasted Shipments'].sum().reset_index()
+    total_forecast_per_city = total_forecast_per_city.rename(columns={'Forecasted Shipments': 'Total Forecasted Shipments'})
+
+    # Menggabungkan informasi jumlah forecast dengan data forecast
+    forecast_data = pd.merge(forecast_data, total_forecast_per_city, on='Origin City', how='left')
+
+    # Menampilkan jumlah forecast per Origin City
+    print(total_forecast_per_city)
+
     # Membuat visualisasi Line Graph berdasarkan Tanggal dan Origin City
-    fig = px.line(
-        forecast_data,
-        x="Date",
-        y="Forecasted Shipments",
-        color="Origin City",
-        markers=True
+    fig = go.Figure()
+
+    for city in origin_cities:
+        city_data = forecast_data[forecast_data['Origin City'] == city]
+        fig.add_trace(go.Scatter(
+            x=city_data['Date'],
+            y=city_data['Forecasted Shipments'],
+            mode='lines+markers',
+            name=city,
+            visible=False,  # Semua trace di-hide awalnya
+            customdata=city_data[['Origin City']],  # Tambahkan Origin City sebagai custom data
+            hovertemplate=(
+                "Origin City=%{customdata[0]}<br>"
+                "Date=%{x|%b %d, %Y}<br>"
+                "Forecasted Shipments=%{y:,}<extra></extra>"
+            )  # Format informasi hover
+        ))
+
+    # Dropdown menu untuk memilih Origin City
+    buttons = []
+    for i, city in enumerate(origin_cities):
+        visibility = [False] * len(origin_cities)
+        visibility[i] = True
+        buttons.append(dict(label=city,
+                            method='update',
+                            args=[{'visible': visibility},
+                                  {'title': f"Forecasted Shipments for {city}"}]))
+
+    fig.update_layout(
+        updatemenus=[dict(
+            active=0,
+            buttons=buttons,
+            x=0.5,  # Posisikan di tengah secara horizontal
+            xanchor='center',
+            y=1.02,  # Letakkan tepat di bawah judul
+            yanchor='bottom'
+        )],
+        title="Forecasted Shipments per Origin City (Desember 2024)",
+        xaxis_title="Date",
+        yaxis_title="Forecasted Shipments",
+        legend_title="Origin City",
+        uniformtext_minsize=10,
+        uniformtext_mode='hide',
+        yaxis=dict(tickformat=',.0f')
     )
+
 
     # Menampilkan grafik di halaman web Flask
     graph_html = fig.to_html(full_html=False)
@@ -198,6 +265,7 @@ def analyze():
                            graph_html=graph_html)
 
 
+
 @app.route('/update-growth', methods=['POST'])
 def update_growth():
     global result_df, base_forecast_df, forecast_data  # Akses base_forecast_df dan forecast_data
@@ -206,40 +274,73 @@ def update_growth():
         return jsonify({'error': 'No base forecast data available. Please run analysis first.'}), 400
 
     try:
+        # Ambil input growth dari pengguna
         growth = float(request.form['growth'])
     except ValueError:
         return jsonify({'error': 'Invalid growth value'}), 400
 
     try:
-        # Pastikan data numeric diubah dengan benar
+        # Pastikan data numerik diubah dengan benar
         base_forecast_df['Desember'] = pd.to_numeric(base_forecast_df['Desember'].replace({',': ''}, regex=True), errors='coerce')
         base_forecast_df['November'] = pd.to_numeric(base_forecast_df['November'].replace({',': ''}, regex=True), errors='coerce')
 
-        # Menghitung Desember dan Growth
-        result_df['Desember'] = base_forecast_df['Desember'] * (1 + growth / 100)
+        # Menghitung ulang nilai Desember dan Growth, dengan pembulatan
+        result_df['Desember'] = (base_forecast_df['Desember'] * (1 + growth / 100)).round()
         result_df['Growth %'] = ((result_df['Desember'] - base_forecast_df['November']) / base_forecast_df['November']) * 100
 
-        result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{x:,.0f}")
+        # Format kolom untuk tampilan tabel
+        result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{int(x):,}")  # Format tanpa koma desimal
         result_df['Growth %'] = result_df['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
 
-        # Pastikan Initial Shipments ada di forecast_data
+        # Pastikan kolom `Initial Shipments` ada di forecast_data
         if 'Initial Shipments' not in forecast_data.columns:
             forecast_data['Initial Shipments'] = forecast_data['Forecasted Shipments']
 
-        # Resetkan Forecasted Shipments ke nilai awal sebelum growth
-        forecast_data['Forecasted Shipments'] = forecast_data['Initial Shipments'] * (1 + growth / 100)
+        # Update `Forecasted Shipments` berdasarkan growth dengan pembulatan
+        forecast_data['Forecasted Shipments'] = (forecast_data['Initial Shipments'] * (1 + growth / 100)).round()
 
-        # Membuat grafik baru
-        fig = px.line(
-            forecast_data,
-            x="Date",
-            y="Forecasted Shipments",
-            color="Origin City",
-            markers=True
-        )
+        # Membuat grafik baru dengan Dropdown Menu
+        fig = go.Figure()
 
-        fig.update_traces(text=None)
+        # Menambahkan trace untuk setiap kota
+        for city in forecast_data['Origin City'].unique():
+            city_data = forecast_data[forecast_data['Origin City'] == city]
+            fig.add_trace(go.Scatter(
+                x=city_data['Date'],
+                y=city_data['Forecasted Shipments'],
+                mode='lines+markers',
+                name=city,
+                visible=False,  # Semua trace di-hide awalnya
+                customdata=city_data[['Origin City']],  # Tambahkan Origin City sebagai custom data
+                hovertemplate=(
+                    "Origin City=%{customdata[0]}<br>"
+                    "Date=%{x|%b %d, %Y}<br>"
+                    "Forecasted Shipments=%{y:,}<extra></extra>"
+                )
+            ))
+
+        # Membuat dropdown menu
+        buttons = []
+        for i, city in enumerate(forecast_data['Origin City'].unique()):
+            visibility = [False] * len(forecast_data['Origin City'].unique())
+            visibility[i] = True  # Set hanya trace yang sesuai terlihat
+            buttons.append(dict(
+                label=city,
+                method='update',
+                args=[{'visible': visibility},
+                      {'title': f"Forecasted Shipments for {city}"}]
+            ))
+
+        # Menambahkan menu dropdown ke layout
         fig.update_layout(
+            updatemenus=[dict(
+                active=0,
+                buttons=buttons,
+                x=0.5,  # Posisikan di tengah secara horizontal
+                xanchor='center',
+                y=1.02,  # Letakkan tepat di bawah judul
+                yanchor='bottom'
+            )],
             title="Forecasted Shipments per Origin City (Desember 2024)",
             xaxis_title="Date",
             yaxis_title="Forecasted Shipments",
@@ -249,13 +350,15 @@ def update_growth():
             yaxis=dict(tickformat=',.0f')
         )
 
-        # Kirim tabel yang diperbarui dan grafik baru
-        updated_table = result_df.to_html(classes='table table-striped', index=False)
+        # Konversi grafik ke HTML
         graph_html = fig.to_html(full_html=False)
+
+        # Kirim data tabel dan grafik ke frontend
+        updated_table = result_df.to_html(classes='table table-striped', index=False)
         return jsonify({'updated_table': updated_table, 'graph_html': graph_html})
 
     except Exception as e:
-        # Menampilkan error yang lebih spesifik
+        # Tangani error yang terjadi
         return jsonify({'error': str(e)}), 500
 
 

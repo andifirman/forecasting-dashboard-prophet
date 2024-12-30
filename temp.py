@@ -35,6 +35,17 @@ base_forecast_df = None
 def index():
     return render_template('index.html')  # Menampilkan halaman upload
 
+
+
+# Ganti nilai negatif dengan angka acak antara 5 hingga 32
+def replace_negative_with_random(data, min_val=5, max_val=32):
+    """
+    Fungsi untuk mengganti nilai negatif dengan angka acak dalam rentang tertentu (5-32).
+    """
+    return [random.randint(min_val, max_val) if value < 0 else value for value in data]
+
+
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     global result_df, base_forecast_df, forecast_data, total_december_forecast
@@ -92,41 +103,6 @@ def analyze():
         future = model.make_future_dataframe(periods=31)
         forecast = model.predict(future)
 
-        # # Menambahkan growth adjustment (10%)
-        # forecast['yhat'] = forecast['yhat'] * 1.10
-
-        # Menyimpan minggu untuk setiap tanggal
-        forecast['week'] = forecast['ds'].dt.isocalendar().week
-
-        # Proses per minggu
-        for week, group in forecast.groupby('week'):
-            # Identifikasi nilai tertinggi dan tanggalnya
-            highest_value = group['yhat'].max()
-            highest_dates = group[group['yhat'] == highest_value]['ds']
-
-            # Cari nilai tertinggi kedua
-            second_highest_value = group[group['yhat'] < highest_value]['yhat'].max()
-
-            # Jika ada event tanggal 12 atau 25 di minggu tersebut, swap nilai
-            for event_date in ['2024-12-12', '2024-12-25']:
-                if pd.to_datetime(event_date).isocalendar().week == week:
-                    # Pastikan nilai tertinggi berpindah ke event
-                    forecast.loc[forecast['ds'] == event_date, 'yhat'] = highest_value
-
-                    # Update nilai tertinggi sebelumnya menjadi nilai tertinggi kedua
-                    if second_highest_value is not None:
-                        for date in highest_dates:
-                            if date != pd.to_datetime(event_date):
-                                forecast.loc[forecast['ds'] == date, 'yhat'] = second_highest_value
-                    
-                    # H+1: Turunkan nilai setidaknya 2%
-                    next_day = pd.to_datetime(event_date) + pd.Timedelta(days=1)
-                    if next_day in forecast['ds'].values:
-                        h1_value = highest_value * 0.98  # Turunkan 2%
-                        forecast.loc[forecast['ds'] == next_day, 'yhat'] = min(
-                            h1_value, forecast.loc[forecast['ds'] == next_day, 'yhat'].values[0]
-                        )
-
         # Filter data Desember
         december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
 
@@ -135,7 +111,6 @@ def analyze():
 
         # Return total forecast dan dataframe Desember forecast
         return total_forecast, december_forecast
-
 
     # Forecasting per Origin City
     origin_cities = all_forecasting['Origin City'].unique()
@@ -160,6 +135,9 @@ def analyze():
         'Desember': [results[city] for city in sorted(origin_cities)]
     })
 
+    # Gantikan nilai negatif dalam kolom Desember dengan angka acak
+    result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
+
     # Hitung Growth %
     result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
 
@@ -173,7 +151,9 @@ def analyze():
         return row['Desember']
 
     result_df['Desember'] = result_df.apply(apply_growth_limit, axis=1)
-    result_df['Growth %'] = ((result_df['Desember'] - result_df['November']) / result_df['November']) * 100
+
+    # Gantikan nilai negatif dalam kolom Desember dengan angka acak setelah adjustment
+    result_df['Desember'] = replace_negative_with_random(result_df['Desember'])
 
     # Format angka agar lebih rapi
     result_df['November'] = result_df['November'].apply(lambda x: f"{x:,.0f}")
@@ -192,19 +172,12 @@ def analyze():
         df['Origin City'] = city
         forecast_data = pd.concat([forecast_data, df])
 
+    # Gantikan nilai negatif dalam Forecasted Shipments dengan angka acak
+    forecast_data['yhat'] = replace_negative_with_random(forecast_data['yhat'])
+
     # Format hasil agar lebih rapi
     forecast_data['yhat'] = forecast_data['yhat'].apply(lambda x: round(x))
     forecast_data = forecast_data.rename(columns={'ds': 'Date', 'yhat': 'Forecasted Shipments'})
-
-    # Total forecast per Origin City berdasarkan forecast harian Desember
-    total_forecast_per_city = forecast_data.groupby('Origin City')['Forecasted Shipments'].sum().reset_index()
-    total_forecast_per_city = total_forecast_per_city.rename(columns={'Forecasted Shipments': 'Total Forecasted Shipments'})
-
-    # Menggabungkan informasi jumlah forecast dengan data forecast
-    forecast_data = pd.merge(forecast_data, total_forecast_per_city, on='Origin City', how='left')
-
-    # Menampilkan jumlah forecast per Origin City
-    print(total_forecast_per_city)
 
     # Membuat visualisasi Line Graph berdasarkan Tanggal dan Origin City
     fig = px.line(
@@ -215,22 +188,6 @@ def analyze():
         markers=True
     )
 
-    # Menghilangkan teks yang muncul di sepanjang garis
-    fig.update_traces(text=None)
-
-    # Menambahkan layout untuk mempercantik grafik
-    fig.update_layout(
-        title="Forecasted Shipments per Origin City (Desember 2024)",
-        xaxis_title="Date",
-        yaxis_title="Forecasted Shipments",
-        legend_title="Origin City",
-        uniformtext_minsize=10,
-        uniformtext_mode='hide',
-        yaxis=dict(
-            tickformat=',.0f'  # Format angka dengan pemisah ribuan
-        )
-    )
-
     # Menampilkan grafik di halaman web Flask
     graph_html = fig.to_html(full_html=False)
 
@@ -239,7 +196,6 @@ def analyze():
                            tables=[result_df.to_html(classes='table table-striped', index=False)],\
                            total_december_forecast=f"{total_december_forecast:,.0f}", \
                            graph_html=graph_html)
-
 
 
 @app.route('/update-growth', methods=['POST'])
