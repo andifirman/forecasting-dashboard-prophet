@@ -495,8 +495,12 @@ def update_growth():
             )
 
         # Debugging: Periksa setelah penggabungan ulang
-        print("Columns in forecast_data after re-adding actual data:", forecast_data.columns)
-        print("Preview of forecast_data after re-adding actual data:", forecast_data.head())
+        # print("Columns in forecast_data after re-adding actual data:", forecast_data.columns)
+        # print("Preview of forecast_data after re-adding actual data:", forecast_data.head())
+
+        # Pastikan kolom `Initial Shipments` ada di forecast_data
+        if 'Initial Shipments' not in forecast_data.columns:
+            forecast_data['Initial Shipments'] = forecast_data['Forecasted Shipments']
 
         # Resetkan Forecasted Shipments ke nilai awal sebelum growth
         forecast_data['Forecasted Shipments'] = forecast_data['Initial Shipments'] * (1 + growth / 100)
