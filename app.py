@@ -97,7 +97,7 @@ def analyze():
         model = Prophet(holidays=events, changepoint_prior_scale=0.1)
         model.fit(city_data)
 
-        # Forecast Desember
+        # Forecast Model for Next Month Desember
         future = model.make_future_dataframe(periods=31)
         forecast = model.predict(future)
 
@@ -320,14 +320,8 @@ def compare_forecast_actual():
     actual_data['DATE'] = pd.to_datetime(actual_data['DATE'], errors='coerce')
     actual_data = actual_data.rename(columns={"DATE": "Date", "Connote": "Actual Shipments"})
 
-    # Debugging: Periksa data aktual
-    # print("Actual data preview before grouping:", actual_data.head())
-
     # Kelompokkan data aktual berdasarkan Date dan Origin City
     actual_data_grouped = actual_data.groupby(['Date', 'Origin City'], as_index=False)['Actual Shipments'].sum()
-
-    # Debugging: Periksa hasil pengelompokan data aktual
-    # print("Actual data preview after grouping:", actual_data_grouped.head())
 
     # Filter data aktual hanya untuk kota-kota yang ada di forecast_data
     actual_data_grouped = actual_data_grouped[actual_data_grouped['Origin City'].isin(forecast_data['Origin City'].unique())]
@@ -339,9 +333,6 @@ def compare_forecast_actual():
         on=['Date', 'Origin City'],
         how='left'
     )
-
-    # Debugging: Periksa hasil penggabungan
-    # print("Combined forecast and actual data preview:", combined_data.head())
 
     # Membuat grafik dengan dropdown menu
     fig = go.Figure()
@@ -494,10 +485,6 @@ def update_growth():
                 how='left'
             )
 
-        # Debugging: Periksa setelah penggabungan ulang
-        # print("Columns in forecast_data after re-adding actual data:", forecast_data.columns)
-        # print("Preview of forecast_data after re-adding actual data:", forecast_data.head())
-
         # Pastikan kolom `Initial Shipments` ada di forecast_data
         if 'Initial Shipments' not in forecast_data.columns:
             forecast_data['Initial Shipments'] = forecast_data['Forecasted Shipments']
@@ -578,8 +565,6 @@ def update_growth():
                 )
             ))
 
-        # Dropdown menu (sama seperti sebelumnya)
-
         # Konversi grafik ke HTML
         graph_html = fig.to_html(full_html=False)
 
@@ -590,10 +575,6 @@ def update_growth():
     except Exception as e:
         print("Error occurred:", str(e))  # Debugging: Cetak pesan error
         return jsonify({'error': str(e)}), 500
-
-
-
-
 
 
 @app.route('/download/<filename>')
