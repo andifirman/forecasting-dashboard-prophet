@@ -76,8 +76,8 @@ def analyze():
 
     # Preprocessing data
     data['DATE'] = pd.to_datetime(data['DATE'])
-    all_forecasting = data[data['DATE'] <= '2024-12-01']
-    all_forecasting = all_forecasting.rename(columns={"DATE": "ds", "Connote": "y"})
+    shipment_forecasting = data[data['DATE'] <= '2024-12-01']
+    shipment_forecasting = shipment_forecasting.rename(columns={"DATE": "ds", "Connote": "y"})
 
     # Menambahkan event khusus
     events = pd.DataFrame({
@@ -88,9 +88,9 @@ def analyze():
     })
 
     # Fungsi untuk melakukan forecasting per Origin City
-    def forecast_origin_city(city_name, all_forecasting, events, year=2024):
+    def forecast_origin_city(city_name, shipment_forecasting, events, year=2024):
         # Filter data per Origin City
-        city_data = all_forecasting[all_forecasting['Origin City'] == city_name]
+        city_data = shipment_forecasting[shipment_forecasting['Origin City'] == city_name]
         city_data = city_data.groupby('ds').agg({"y": "sum"}).reset_index()
 
         # Inisialisasi Prophet
@@ -144,12 +144,12 @@ def analyze():
 
 
     # Forecasting per Origin City
-    origin_cities = all_forecasting['Origin City'].unique()
+    origin_cities = shipment_forecasting['Origin City'].unique()
     results = {}
     december_forecasts = {}
 
     for city in origin_cities:
-        total_forecast, december_forecast = forecast_origin_city(city, all_forecasting, events)
+        total_forecast, december_forecast = forecast_origin_city(city, shipment_forecasting, events)
         results[city] = total_forecast
         december_forecasts[city] = december_forecast  # Simpan Desember forecast per kota
 
@@ -532,38 +532,75 @@ def update_growth():
                            "Total Actual Shipments=%{y:,}<extra></extra>")
         ))
 
+
         # Tambahkan trace untuk setiap kota
+        visibility = [False, False]  # Awal visibilitas hanya All Origin Cities
         for city in forecast_data['Origin City'].unique():
             city_forecast = forecast_data[forecast_data['Origin City'] == city]
+            city_actual = forecast_data[forecast_data['Origin City'] == city]
+
+            # Forecast trace untuk setiap kota
             fig.add_trace(go.Scatter(
                 x=city_forecast['Date'],
                 y=city_forecast['Forecasted Shipments'],
                 mode='lines+markers',
                 name=f"{city} (Forecast)",
-                visible=False,
-                customdata=city_forecast[['Origin City']],
-                hovertemplate=(
-                    "Origin City=%{customdata[0]}<br>"
-                    "Date=%{x|%b %d, %Y}<br>"
-                    "Forecasted Shipments=%{y:,}<extra></extra>"
-                )
+                visible=False,  # Disembunyikan terlebih dahulu
+                hovertemplate=(f"Origin City={city}<br>Date=%{{x|%b %d, %Y}}<br>Forecasted Shipments=%{{y:,}}<extra></extra>")
             ))
 
-            city_actual = forecast_data[forecast_data['Origin City'] == city]
+            # Actual trace untuk setiap kota
             fig.add_trace(go.Scatter(
                 x=city_actual['Date'],
                 y=city_actual['Actual Shipments'],
                 mode='lines+markers',
                 name=f"{city} (Actual)",
-                visible=False,
+                visible=False,  # Disembunyikan terlebih dahulu
                 line=dict(dash='dot'),
-                customdata=city_actual[['Origin City']],
-                hovertemplate=(
-                    "Origin City=%{customdata[0]}<br>"
-                    "Date=%{x|%b %d, %Y}<br>"
-                    "Actual Shipments=%{y:,}<extra></extra>"
-                )
+                hovertemplate=(f"Origin City={city}<br>Date=%{{x|%b %d, %Y}}<br>Actual Shipments=%{{y:,}}<extra></extra>")
             ))
+
+        # Membuat tombol dropdown untuk setiap Origin City
+        buttons = [
+            dict(
+                label='All Origin Cities',
+                method='update',
+                args=[{'visible': [True, True] + [False] * (2 * len(forecast_data['Origin City'].unique()))},
+                      {'title': "Forecast vs Actual Shipments for All Origin Cities"}]
+            )
+        ]
+
+        # Tombol untuk setiap kota
+        for i, city in enumerate(forecast_data['Origin City'].unique()):
+            # Set visibilitas untuk kota yang dipilih
+            visibility = [False, False]  # Reset visibilitas untuk All Origin Cities
+            visibility.extend([True, True])  # Tampilkan trace untuk Forecast dan Actual untuk kota tersebut
+            
+            buttons.append(dict(
+                label=city,
+                method='update',
+                args=[{'visible': visibility + [False] * (2 * len(forecast_data['Origin City'].unique()) - len(visibility))},
+                      {'title': f"Forecast vs Actual Shipments for {city}"}]
+            ))
+
+        # Menambahkan tombol dropdown ke layout
+        fig.update_layout(
+            updatemenus=[dict(
+                active=0,
+                buttons=buttons,
+                x=0.5,
+                xanchor='center',
+                y=1.15,
+                yanchor='top'
+            )],
+            title="Forecast vs Actual Shipments for All Origin Cities",
+            xaxis_title="Date",
+            yaxis_title="Shipments",
+            legend_title="Origin City",
+            uniformtext_minsize=10,
+            uniformtext_mode='hide',
+            yaxis=dict(tickformat=',.0f')
+        )
 
         # Konversi grafik ke HTML
         graph_html = fig.to_html(full_html=False)
@@ -575,6 +612,7 @@ def update_growth():
     except Exception as e:
         print("Error occurred:", str(e))  # Debugging: Cetak pesan error
         return jsonify({'error': str(e)}), 500
+
 
 
 @app.route('/download/<filename>')
