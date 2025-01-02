@@ -75,8 +75,9 @@ def analyze():
         return "Invalid input for year or days", 400
 
     # Validasi kolom
-    if 'AREA 2' not in data.columns or 'Destname' not in data.columns or 'DATE' not in data.columns or 'Cnote' not in data.columns:
-        return "Missing required columns in the dataset (AREA 2, Destname, DATE, Cnote).", 400
+    required_columns = ['AREA', 'AREA 2', 'Destname', 'DATE', 'Cnote']
+    if not all(col in data.columns for col in required_columns):
+        return f"Missing required columns in the dataset ({', '.join(required_columns)}).", 400
 
     # Preprocessing data
     data['ds'] = pd.to_datetime(data['DATE'])
@@ -90,98 +91,89 @@ def analyze():
         'upper_window': [days_after_event, days_after_event]
     })
 
-    # Fungsi untuk melakukan forecasting berdasarkan AREA 2 dan Destname
-    def forecast_by_area_and_dest(all_forecasting, events, year=2024):
+    # Fungsi untuk melakukan forecasting berdasarkan AREA, AREA 2, dan Destname
+    def forecast_by_area(data, events, year=2024):
         results = {}
+        area_totals = {}
 
-        for area in all_forecasting['AREA 2'].unique():
-            area_data = all_forecasting[all_forecasting['AREA 2'] == area]
+        for area in data['AREA'].unique():
+            area_data = data[data['AREA'] == area]
+            area_forecast = pd.DataFrame()
 
-            for dest in area_data['Destname'].unique():
-                dest_data = area_data[area_data['Destname'] == dest]
-                dest_data = dest_data.groupby('ds').agg({"y": "sum"}).reset_index()
+            for area2 in area_data['AREA 2'].unique():
+                area2_data = area_data[area_data['AREA 2'] == area2]
 
-                if dest_data.empty:
-                    continue
+                for dest in area2_data['Destname'].unique():
+                    dest_data = area2_data[area2_data['Destname'] == dest]
+                    dest_data = dest_data.groupby('ds').agg({"y": "sum"}).reset_index()
 
-                model = Prophet(holidays=events, changepoint_prior_scale=0.1)
-                model.fit(dest_data)
+                    if dest_data.empty:
+                        continue
 
-                future = model.make_future_dataframe(periods=31)
-                forecast = model.predict(future)
-                forecast['week'] = forecast['ds'].dt.isocalendar().week
+                    model = Prophet(holidays=events, changepoint_prior_scale=0.1)
+                    model.fit(dest_data)
 
-                for week, group in forecast.groupby('week'):
-                    highest_value = group['yhat'].max()
-                    highest_dates = group[group['yhat'] == highest_value]['ds']
-                    second_highest_value = group[group['yhat'] < highest_value]['yhat'].max()
+                    future = model.make_future_dataframe(periods=31)
+                    forecast = model.predict(future)
 
-                    for event_date in ['2024-12-12', '2024-12-25']:
-                        if pd.to_datetime(event_date).isocalendar().week == week:
-                            forecast.loc[forecast['ds'] == event_date, 'yhat'] = highest_value
+                    # Filter forecast untuk Desember
+                    december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
 
-                            if second_highest_value is not None:
-                                for date in highest_dates:
-                                    if date != pd.to_datetime(event_date):
-                                        forecast.loc[forecast['ds'] == date, 'yhat'] = second_highest_value
+                    # Tambahkan hasil forecast ke area_forecast
+                    if not december_forecast.empty:
+                        december_forecast['Destname'] = dest
+                        december_forecast['AREA 2'] = area2
+                        december_forecast['AREA'] = area
+                        area_forecast = pd.concat([area_forecast, december_forecast])
 
-                            next_day = pd.to_datetime(event_date) + pd.Timedelta(days=1)
-                            if next_day in forecast['ds'].values:
-                                h1_value = highest_value * 0.98
-                                forecast.loc[forecast['ds'] == next_day, 'yhat'] = min(
-                                    h1_value, forecast.loc[forecast['ds'] == next_day, 'yhat'].values[0]
-                                )
+            # Jika area_forecast tidak kosong, hitung total forecast per tanggal
+            if not area_forecast.empty:
+                total_forecast_per_date = area_forecast.groupby('ds')['yhat'].sum().reset_index()
+                area_totals[area] = total_forecast_per_date
+                results[area] = area_forecast
 
-                december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
-                total_forecast = december_forecast['yhat'].sum()
-
-                results[(area, dest)] = {
-                    'total_forecast': total_forecast,
-                    'december_forecast': december_forecast
-                }
-
-        return results
+        return results, area_totals
 
     # Jalankan forecasting
-    results = forecast_by_area_and_dest(data, events, year)
+    breakdown_results, area_totals = forecast_by_area(data, events, year)
 
-    # Format hasil ke dalam DataFrame untuk ditampilkan
+    # Format hasil ke dalam DataFrame untuk tabel
     summary_data = []
-    for (area, dest), result in results.items():
-        december_forecast = result['december_forecast']
-        total_forecast = result['total_forecast']
-
-        summary_data.append({
-            'AREA 2': area,
-            'Destname': dest,
-            'Total Forecast (Desember)': f"{total_forecast:,.0f}"
-        })
+    for area, breakdown in breakdown_results.items():
+        for area2, area2_data in breakdown.groupby('AREA 2'):
+            for dest, dest_data in area2_data.groupby('Destname'):
+                total_forecast = dest_data['yhat'].sum()
+                summary_data.append({
+                    'AREA': area,
+                    'AREA 2': area2,
+                    'Destname': dest,
+                    'Total Forecast (Desember)': f"{total_forecast:,.0f}"
+                })
 
     result_df = pd.DataFrame(summary_data)
 
-    # Buat visualisasi grafik untuk All AREA 2 dan Destname
+    # Buat visualisasi grafik untuk total forecast per AREA
     fig = go.Figure()
 
-    for (area, dest), result in results.items():
-        december_forecast = result['december_forecast']
+    for area, totals in area_totals.items():
         fig.add_trace(go.Scatter(
-            x=december_forecast['ds'],
-            y=december_forecast['yhat'],
+            x=totals['ds'],
+            y=totals['yhat'],
             mode='lines+markers',
-            name=f"{area} - {dest}"
+            name=area
         ))
 
     fig.update_layout(
-        title="Forecasted Shipments per AREA 2 and Destname (Desember 2024)",
+        title="Forecasted Shipments per AREA (Desember 2024)",
         xaxis_title="Date",
         yaxis_title="Forecasted Shipments",
-        legend_title="AREA 2 - Destname"
+        legend_title="AREA"
     )
 
     graph_html = fig.to_html(full_html=False)
 
     # Tampilkan hasil
-    return render_template('result.html',
+    return render_template('resultin.html',
                            tables=[result_df.to_html(classes='table table-striped', index=False)],
                            graph_html=graph_html)
 
