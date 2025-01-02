@@ -62,6 +62,20 @@
       {{ graph_html | safe }}
     </div>
 
+    <!-- Form untuk Mengatur Growth -->
+    <div class="mt-4">
+      <h3 class="text-center">Adjust Growth Percentage</h3>
+      <form id="growth-form">
+        <div class="mb-3">
+          <label for="growth" class="form-label">Enter Growth (%):</label>
+          <input type="number" step="0.01" class="form-control" id="growth" name="growth" placeholder="Enter growth percentage..." required>
+        </div>
+        <div class="text-center">
+          <button type="submit" class="btn btn-success">Update Results</button>
+        </div>
+      </form>
+    </div>
+
     <!-- Form untuk Upload Data Aktual -->
     <div class="mt-4">
       <h3 class="text-center">Upload Actual Data</h3>
@@ -77,19 +91,7 @@
       </form>
     </div>
 
-    <!-- Form untuk Mengatur Growth -->
-    <div class="mt-4">
-      <h3 class="text-center">Adjust Growth Percentage</h3>
-      <form id="growth-form">
-        <div class="mb-3">
-          <label for="growth" class="form-label">Enter Growth (%):</label>
-          <input type="number" step="0.01" class="form-control" id="growth" name="growth" placeholder="Enter growth percentage..." required>
-        </div>
-        <div class="text-center">
-          <button type="submit" class="btn btn-success">Update Results</button>
-        </div>
-      </form>
-    </div>
+    
 
     <!-- Tombol Download -->
     <div class="text-center mt-3">
