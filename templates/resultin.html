@@ -60,7 +60,7 @@
 
     <!-- Tabel Breakdown -->
     <div class="table-container">
-      <h3 class="text-center">Detailed Breakdown (AREA 2 and Destname)</h3>
+      <h3 class="text-center">Breakdown Area (AREA 2 dan Kecamatan)</h3>
       <div id="breakdown_table" class="table-responsive">
         {{ breakdown_table | safe }}
       </div>
@@ -120,29 +120,39 @@
   </div>
 
   <script>
-    // JavaScript untuk update tabel berdasarkan growth
-    $("#growth-form").submit(function(e) {
-      e.preventDefault();
+  /// JavaScript untuk update tabel berdasarkan growth
+  $("#growth-form").submit(function(e) {
+      e.preventDefault();  // Mencegah form submit default
       const growth = $("#growth").val();
 
       // AJAX untuk mengirim growth ke server
       $.post("/update-growth", { growth: growth }, function(data) {
+        // Pastikan data yang diterima mengandung updated_table dan graph_html untuk memperbarui konten
+        console.log(data);  // Debugging: cek apakah data sudah sesuai
+
         if (data.error) {
           alert("Error: " + data.error);
           return;
         }
 
         // Update tabel hasil
-        $("#area_table").html(data.area_table);
-        $("#breakdown_table").html(data.breakdown_table);
+        $("#results").html(data.updated_table); // Perbarui tabel dengan updated_table yang baru
 
         // Update grafik dengan HTML baru
-        $('#graph_container').html(data.graph_html);
+        $('#graph_container').html(data.graph_html);  // Gantikan konten grafik di container
+
+        // Jika data.graph_data ada, kita bisa menggunakan Plotly untuk memperbarui grafik dengan data tersebut
+        if (data.graph_data) {
+          // Pastikan data.graph_data ada dan valid
+          Plotly.react('graph_container', data.graph_data);
+        }
       }).fail(function(xhr) {
         alert("Error: " + xhr.status + " - " + xhr.statusText);
       });
     });
 
+
+  
     // JavaScript untuk Upload Data Aktual
     $("#actual-data-form").submit(function(e) {
       e.preventDefault();
@@ -153,9 +163,9 @@
         return;
       }
       formData.append("actual_data", actualFile);
-
+  
       $("#loading").show();
-
+  
       $.ajax({
         url: "/compare-forecast-actual",
         type: "POST",
@@ -177,5 +187,6 @@
       });
     });
   </script>
+  
 </body>
 </html>

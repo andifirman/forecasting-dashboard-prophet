@@ -38,10 +38,15 @@ def index():
 
 # Ganti nilai negatif dengan angka acak antara 5 hingga 32
 def replace_negative_with_random(data, min_val=5, max_val=32):
-    """
-    Fungsi untuk mengganti nilai negatif dengan angka acak dalam rentang tertentu (5-32).
-    """
+    # Fungsi untuk mengganti nilai negatif dengan angka acak dalam rentang tertentu (5-32).
     return [random.randint(min_val, max_val) if value < 0 else value for value in data]
+
+# Fungsi untuk mengganti komponen desimal growth yang -5.00%
+def adjust_growth_decimal(value):
+    # Jika growth % adalah -5.00%, maka ubah bagian desimalnya menjadi angka antara 0.08 sampai 0.97
+    if value == -5.00:
+        return round(value + random.uniform(0.08, 0.97), 2)
+    return value
 
 
 @app.route('/analyze', methods=['POST'])
@@ -113,6 +118,27 @@ def analyze():
     # Forecasting per AREA, AREA 2, dan Destname
     results = []
     area_summary = []
+    all_forecast_data = []
+
+    # Fungsi untuk menyesuaikan growth dan menambah angka acak pada desimal
+    def adjust_forecast_growth(november, december):
+        growth_percentage = ((december - november) / november) * 100
+        
+        # Cek apakah growth lebih kecil dari -5%
+        if growth_percentage < -5.00:
+            growth_percentage = -5.00
+            # Sesuaikan Desember untuk menyesuaikan growth di -5%
+            december = november * (1 + growth_percentage / 100)
+        
+        # Tambahkan angka acak di belakang koma menggunakan fungsi replace_negative_with_random
+        random_decimal = replace_negative_with_random([0])[0] / 100  # Hanya mengambil nilai pertama, acak antara 5-32
+        december = round(december + random_decimal, 2)
+
+        # Adjust decimal part of growth if it's exactly -5.00%
+        growth_percentage = adjust_growth_decimal(growth_percentage)
+
+        return december, growth_percentage
+
     for area in all_forecasting['AREA'].unique():
         area_data = all_forecasting[all_forecasting['AREA'] == area]
         total_area_nov = 0
@@ -125,20 +151,29 @@ def analyze():
 
             for destname in area2_data['Destname'].unique():
                 dest_data = area2_data[area2_data['Destname'] == destname]
-                total_forecast, _ = forecast_per_destname(area, area2, dest_data, events, year)
+                total_forecast, december_forecast = forecast_per_destname(area, area2, dest_data, events, year)
 
                 total_nov = dest_data[(dest_data['ds'] >= f"{year}-11-01") & (dest_data['ds'] <= f"{year}-11-30")]['y'].sum()
 
                 total_area2_nov += total_nov
                 total_area2_dec += total_forecast
 
+                # Sesuaikan Growth % dan forecast
+                adjusted_december, adjusted_growth = adjust_forecast_growth(total_nov, total_forecast)
+
                 results.append({
                     'AREA': area,
                     'AREA 2': area2,
                     'Destname': destname,
                     'November': total_nov,
-                    'Desember': total_forecast
+                    'Desember': adjusted_december,
+                    'Growth %': adjusted_growth  # Menambahkan nilai Growth % langsung di sini
                 })
+
+                if december_forecast is not None:
+                    december_forecast['AREA'] = area
+                    december_forecast['Destname'] = destname
+                    all_forecast_data.append(december_forecast)
 
             total_area_nov += total_area2_nov
             total_area_dec += total_area2_dec
@@ -152,10 +187,10 @@ def analyze():
     # Konversi hasil ke DataFrame
     breakdown_df = pd.DataFrame(results)
     area_summary_df = pd.DataFrame(area_summary)
+    forecast_data_df = pd.concat(all_forecast_data, ignore_index=True)
 
-    # Hitung Growth %
+    # Hitung Growth % untuk area_summary_df
     area_summary_df['Growth %'] = ((area_summary_df['Desember'] - area_summary_df['November']) / area_summary_df['November']) * 100
-    breakdown_df['Growth %'] = ((breakdown_df['Desember'] - breakdown_df['November']) / breakdown_df['November']) * 100
 
     # Format angka agar lebih rapi
     area_summary_df['November'] = area_summary_df['November'].apply(lambda x: f"{x:,.0f}")
@@ -170,20 +205,61 @@ def analyze():
     area_table = area_summary_df.to_html(classes='table table-striped table-hover', index=False)
     breakdown_table = breakdown_df.to_html(classes='table table-striped table-hover', index=False)
 
-    # Buat grafik berdasarkan AREA
+    # Buat grafik berdasarkan AREA dengan dropdown menu
     fig = go.Figure()
-    for _, row in area_summary_df.iterrows():
-        fig.add_trace(go.Bar(
-            x=['November', 'Desember'],
-            y=[float(row['November'].replace(',', '')), float(row['Desember'].replace(',', ''))],
-            name=row['AREA']
+
+    # Data untuk All AREA
+    all_area_data = forecast_data_df.groupby('ds')['yhat'].sum().reset_index()
+    fig.add_trace(go.Scatter(
+        x=all_area_data['ds'],
+        y=all_area_data['yhat'],
+        mode='lines+markers',
+        name='All Areas',
+        visible=True
+    ))
+
+    # Data untuk masing-masing AREA
+    for area in area_summary_df['AREA']:
+        area_data = forecast_data_df[forecast_data_df['AREA'] == area].groupby('ds')['yhat'].sum().reset_index()
+        fig.add_trace(go.Scatter(
+            x=area_data['ds'],
+            y=area_data['yhat'],
+            mode='lines+markers',
+            name=area,
+            visible=False
         ))
 
+    # Dropdown menu
+    buttons = []
+    buttons.append(dict(label='All Areas',
+                        method='update',
+                        args=[{'visible': [True] + [False] * len(area_summary_df['AREA'])},
+                              {'title': "Forecast Summary for All Areas"}]))
+
+    for i, area in enumerate(area_summary_df['AREA']):
+        visibility = [False] * (len(area_summary_df['AREA']) + 1)
+        visibility[i + 1] = True
+        buttons.append(dict(label=area,
+                            method='update',
+                            args=[{'visible': visibility},
+                                  {'title': f"Forecast Summary for {area}"}]))
+
     fig.update_layout(
+        updatemenus=[dict(
+            active=0,
+            buttons=buttons,
+            x=0.5,
+            xanchor='center',
+            y=1.15,
+            yanchor='top'
+        )],
         title="Forecast Summary by AREA",
-        xaxis_title="Month",
-        yaxis_title="Shipments",
-        barmode='group'
+        xaxis_title="Date",
+        yaxis_title="Forecasted Shipments",
+        legend_title="AREA",
+        uniformtext_minsize=10,
+        uniformtext_mode='hide',
+        yaxis=dict(tickformat=',.0f')
     )
 
     graph_html = fig.to_html(full_html=False)
@@ -194,6 +270,7 @@ def analyze():
         breakdown_table=breakdown_table,
         graph_html=graph_html
     )
+
 
 
 @app.route('/update-growth', methods=['POST'])
@@ -310,6 +387,7 @@ def update_growth():
     except Exception as e:
         # Tangani error yang terjadi
         return jsonify({'error': str(e)}), 500
+
 
 
 
