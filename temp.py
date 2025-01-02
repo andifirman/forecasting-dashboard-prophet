@@ -238,6 +238,7 @@ def analyze():
             visible=False,  # Semua trace di-hide awalnya
             customdata=city_data[['Origin City']],  # Tambahkan Origin City sebagai custom data
             hovertemplate=(
+                "Origin City=%{customdata[0]}<br>"
                 "Date=%{x|%b %d, %Y}<br>"
                 "Forecasted Shipments=%{y:,}<extra></extra>"
             )  # Format informasi hover
@@ -284,6 +285,123 @@ def analyze():
                            tables=[result_df.to_html(classes='table table-striped', index=False)],\
                            total_december_forecast=f"{total_december_forecast:,.0f}", \
                            graph_html=graph_html)
+
+
+@app.route('/update-growth', methods=['POST'])
+def update_growth():
+    global result_df, base_forecast_df, forecast_data  # Akses base_forecast_df dan forecast_data
+
+    if base_forecast_df is None or base_forecast_df.empty:
+        return jsonify({'error': 'No base forecast data available. Please run analysis first.'}), 400
+
+    try:
+        # Ambil input growth dari pengguna
+        growth = float(request.form['growth'])
+    except ValueError:
+        return jsonify({'error': 'Invalid growth value'}), 400
+
+    try:
+        # Pastikan data numerik diubah dengan benar
+        base_forecast_df['Desember'] = pd.to_numeric(base_forecast_df['Desember'].replace({',': ''}, regex=True), errors='coerce')
+        base_forecast_df['November'] = pd.to_numeric(base_forecast_df['November'].replace({',': ''}, regex=True), errors='coerce')
+
+        # Menghitung ulang nilai Desember dan Growth, dengan pembulatan
+        result_df['Desember'] = (base_forecast_df['Desember'] * (1 + growth / 100)).round()
+        result_df['Growth %'] = ((result_df['Desember'] - base_forecast_df['November']) / base_forecast_df['November']) * 100
+
+        # Format kolom untuk tampilan tabel
+        result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{int(x):,}")  # Format tanpa koma desimal
+        result_df['Growth %'] = result_df['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
+
+        # Pastikan kolom `Initial Shipments` ada di forecast_data
+        if 'Initial Shipments' not in forecast_data.columns:
+            forecast_data['Initial Shipments'] = forecast_data['Forecasted Shipments']
+
+        # Resetkan Forecasted Shipments ke nilai awal sebelum growth
+        forecast_data['Forecasted Shipments'] = forecast_data['Initial Shipments'] * (1 + growth / 100)
+
+        # Update `Forecasted Shipments` berdasarkan growth dengan pembulatan
+        forecast_data['Forecasted Shipments'] = (forecast_data['Initial Shipments'] * (1 + growth / 100)).round()
+
+        # Membuat grafik baru dengan Dropdown Menu
+        fig = go.Figure()
+
+        # Grafik untuk All Origin City
+        all_cities_data = forecast_data.groupby('Date')['Forecasted Shipments'].sum().reset_index()
+        fig.add_trace(go.Scatter(
+            x=all_cities_data['Date'],
+            y=all_cities_data['Forecasted Shipments'],
+            mode='lines+markers',
+            name='All Origin City',
+            visible=True,  # Menampilkan grafik untuk All Origin City
+            hovertemplate=("Date=%{x|%b %d, %Y}<br>"
+                           "Total Forecasted Shipments=%{y:,}<extra></extra>")
+        ))
+
+        # Menambahkan trace untuk setiap kota
+        for city in forecast_data['Origin City'].unique():
+            city_data = forecast_data[forecast_data['Origin City'] == city]
+            fig.add_trace(go.Scatter(
+                x=city_data['Date'],
+                y=city_data['Forecasted Shipments'],
+                mode='lines+markers',
+                name=city,
+                visible=False,  # Semua trace di-hide awalnya
+                customdata=city_data[['Origin City']],  # Tambahkan Origin City sebagai custom data
+                hovertemplate=(
+                    "Origin City=%{customdata[0]}<br>"
+                    "Date=%{x|%b %d, %Y}<br>"
+                    "Forecasted Shipments=%{y:,}<extra></extra>"
+                )
+            ))
+
+        # Membuat dropdown menu
+        buttons = []
+        buttons.append(dict(label='All Origin Cities',
+                            method='update',
+                            args=[{'visible': [True] + [False] * len(forecast_data['Origin City'].unique())},
+                                  {'title': "Forecasted Shipments for All Origin Cities"}]))
+
+        for i, city in enumerate(forecast_data['Origin City'].unique()):
+            visibility = [False] * (len(forecast_data['Origin City'].unique()) + 1)
+            visibility[i + 1] = True  # Set hanya trace yang sesuai terlihat
+            buttons.append(dict(
+                label=city,
+                method='update',
+                args=[{'visible': visibility},
+                      {'title': f"Forecasted Shipments for {city}"}]
+            ))
+
+        # Menambahkan menu dropdown ke layout
+        fig.update_layout(
+            updatemenus=[dict(
+                active=0,
+                buttons=buttons,
+                x=0.5,  # Posisikan di tengah secara horizontal
+                xanchor='center',
+                y=1.02,  # Letakkan tepat di bawah judul
+                yanchor='bottom'
+            )],
+            title="Forecasted Shipments per Origin City (Desember 2024)",
+            xaxis_title="Date",
+            yaxis_title="Forecasted Shipments",
+            legend_title="Origin City",
+            uniformtext_minsize=10,
+            uniformtext_mode='hide',
+            yaxis=dict(tickformat=',.0f')
+        )
+
+        # Konversi grafik ke HTML
+        graph_html = fig.to_html(full_html=False)
+
+        # Kirim data tabel dan grafik ke frontend
+        updated_table = result_df.to_html(classes='table table-striped', index=False)
+        return jsonify({'updated_table': updated_table, 'graph_html': graph_html})
+
+    except Exception as e:
+        # Tangani error yang terjadi
+        return jsonify({'error': str(e)}), 500
+
 
 
 @app.route('/compare-forecast-actual', methods=['POST'])
@@ -379,7 +497,8 @@ def compare_forecast_actual():
             mode='lines+markers',
             name=f"{city} (Forecast)",
             visible=False,
-            hovertemplate=("Date=%{x|%b %d, %Y}<br>"
+            hovertemplate=("Origin City=%{name}<br>"
+                           "Date=%{x|%b %d, %Y}<br>"
                            "Forecasted Shipments=%{y:,}<extra></extra>")
         ))
 
@@ -390,7 +509,8 @@ def compare_forecast_actual():
             name=f"{city} (Actual)",
             visible=False,
             line=dict(dash='dot'),
-            hovertemplate=("Date=%{x|%b %d, %Y}<br>"
+            hovertemplate=("Origin City=%{name}<br>"
+                           "Date=%{x|%b %d, %Y}<br>"
                            "Actual Shipments=%{y:,}<extra></extra>")
         ))
 
@@ -441,146 +561,6 @@ def compare_forecast_actual():
     # Kirim data tabel dan grafik ke frontend
     updated_table = result_df.to_html(classes='table table-striped', index=False)
     return jsonify({'updated_table': updated_table, 'graph_html': graph_html})
-
-
-@app.route('/update-growth', methods=['POST'])
-def update_growth():
-    global result_df, base_forecast_df, forecast_data  # Akses base_forecast_df dan forecast_data
-
-    # Debugging: Periksa base_forecast_df
-    if base_forecast_df is None or base_forecast_df.empty:
-        print("Error: base_forecast_df is empty or None")
-        return jsonify({'error': 'No base forecast data available. Please run analysis first.'}), 400
-
-    try:
-        # Ambil input growth dari pengguna
-        growth = float(request.form['growth'])
-        print("Received growth input:", growth)  # Debugging
-    except ValueError:
-        return jsonify({'error': 'Invalid growth value'}), 400
-
-    try:
-        # Pastikan data numerik diubah dengan benar
-        base_forecast_df['Desember'] = pd.to_numeric(base_forecast_df['Desember'].replace({',': ''}, regex=True), errors='coerce')
-        base_forecast_df['November'] = pd.to_numeric(base_forecast_df['November'].replace({',': ''}, regex=True), errors='coerce')
-
-        # Menghitung ulang nilai Desember dan Growth, dengan pembulatan
-        result_df['Desember'] = (base_forecast_df['Desember'] * (1 + growth / 100)).round()
-        result_df['Growth %'] = ((result_df['Desember'] - base_forecast_df['November']) / base_forecast_df['November']) * 100
-
-        # Debugging: Periksa result_df
-        print("Updated result_df preview:", result_df.head())
-
-        # Format kolom untuk tampilan tabel
-        result_df['Desember'] = result_df['Desember'].apply(lambda x: f"{int(x):,}")  # Format tanpa koma desimal
-        result_df['Growth %'] = result_df['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
-
-        # Debugging: Periksa forecast_data
-        print("Columns in forecast_data before updating growth:", forecast_data.columns)
-
-        # Pastikan kolom `Actual Shipments` ada di forecast_data
-        if 'Actual Shipments' not in forecast_data.columns:
-            print("Column 'Actual Shipments' not found. Re-adding actual data...")
-            
-            # Gabungkan kembali data aktual jika hilang
-            actual_data_grouped = actual_data.groupby(['Date', 'Origin City'], as_index=False)['Actual Shipments'].sum()
-            forecast_data = pd.merge(
-                forecast_data,
-                actual_data_grouped,
-                on=['Date', 'Origin City'],
-                how='left'
-            )
-
-        # Debugging: Periksa setelah penggabungan ulang
-        # print("Columns in forecast_data after re-adding actual data:", forecast_data.columns)
-        # print("Preview of forecast_data after re-adding actual data:", forecast_data.head())
-
-        # Resetkan Forecasted Shipments ke nilai awal sebelum growth
-        forecast_data['Forecasted Shipments'] = forecast_data['Initial Shipments'] * (1 + growth / 100)
-
-        # Update `Forecasted Shipments` berdasarkan growth dengan pembulatan
-        forecast_data['Forecasted Shipments'] = (forecast_data['Initial Shipments'] * (1 + growth / 100)).round()
-
-        # Debugging: Periksa forecast_data
-        print("Updated forecast_data preview:", forecast_data.head())
-
-        # Membuat grafik baru dengan Dropdown Menu
-        fig = go.Figure()
-
-        # Grafik untuk All Origin City
-        all_forecast = forecast_data.groupby('Date')['Forecasted Shipments'].sum().reset_index()
-        all_actual = forecast_data.groupby('Date')['Actual Shipments'].sum().reset_index()
-
-        # Debugging: Periksa data All Origin Cities
-        # print("All Origin Cities Forecast preview:", all_forecast.head())
-        # print("All Origin Cities Actual preview:", all_actual.head())
-
-        # Tambahkan trace untuk Forecasted Shipments
-        fig.add_trace(go.Scatter(
-            x=all_forecast['Date'],
-            y=all_forecast['Forecasted Shipments'],
-            mode='lines+markers',
-            name='All Origin Cities (Forecast)',
-            visible=True,
-            hovertemplate=("Date=%{x|%b %d, %Y}<br>"
-                           "Total Forecasted Shipments=%{y:,}<extra></extra>")
-        ))
-
-        # Tambahkan trace untuk Actual Shipments
-        fig.add_trace(go.Scatter(
-            x=all_actual['Date'],
-            y=all_actual['Actual Shipments'],
-            mode='lines+markers',
-            name='All Origin Cities (Actual)',
-            visible=True,
-            line=dict(dash='dot'),
-            hovertemplate=("Date=%{x|%b %d, %Y}<br>"
-                           "Total Actual Shipments=%{y:,}<extra></extra>")
-        ))
-
-        # Tambahkan trace untuk setiap kota
-        for city in forecast_data['Origin City'].unique():
-            city_forecast = forecast_data[forecast_data['Origin City'] == city]
-            fig.add_trace(go.Scatter(
-                x=city_forecast['Date'],
-                y=city_forecast['Forecasted Shipments'],
-                mode='lines+markers',
-                name=f"{city} (Forecast)",
-                visible=False,
-                customdata=city_forecast[['Origin City']],
-                hovertemplate=(
-                    "Date=%{x|%b %d, %Y}<br>"
-                    "Forecasted Shipments=%{y:,}<extra></extra>"
-                )
-            ))
-
-            city_actual = forecast_data[forecast_data['Origin City'] == city]
-            fig.add_trace(go.Scatter(
-                x=city_actual['Date'],
-                y=city_actual['Actual Shipments'],
-                mode='lines+markers',
-                name=f"{city} (Actual)",
-                visible=False,
-                line=dict(dash='dot'),
-                customdata=city_actual[['Origin City']],
-                hovertemplate=(
-                    "Date=%{x|%b %d, %Y}<br>"
-                    "Actual Shipments=%{y:,}<extra></extra>"
-                )
-            ))
-
-        # Dropdown menu (sama seperti sebelumnya)
-
-        # Konversi grafik ke HTML
-        graph_html = fig.to_html(full_html=False)
-
-        # Kirim data tabel dan grafik ke frontend
-        updated_table = result_df.to_html(classes='table table-striped', index=False)
-        return jsonify({'updated_table': updated_table, 'graph_html': graph_html})
-
-    except Exception as e:
-        print("Error occurred:", str(e))  # Debugging: Cetak pesan error
-        return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
 def download_file(filename):

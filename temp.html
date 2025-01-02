@@ -50,15 +50,38 @@
   <div class="container mt-5">
     <h1 class="text-center mb-4">Forecast Results</h1>
 
-    <!-- Tabel Hasil Forecast -->
-    <div id="results" class="table-responsive">
+    <!-- Dropdown untuk memilih antara Shipment (Connote) dan Weight -->
+  <div class="row mb-4">
+    <div class="col-md-3 d-flex align-items-center">
+      <label for="forecast-type" class="form-label">Select Forecast Type:</label>
+    </div>
+    <div class="col-md-9">
+      <select id="forecast-type" class="form-select" onchange="updateForecastType()">
+        <option value="shipment">Shipment (Connote)</option>
+        <option value="weight">Weight</option>
+      </select>
+    </div>
+  </div>
+
+
+    <!-- Tabel Hasil Forecast untuk Shipment (Connote) -->
+    <div id="results-shipment" class="table-responsive">
+      <h3 class="text-center">Forecast for Shipment (Connote)</h3>
       <table class="table table-bordered table-striped table-hover">
-        {{ tables | safe }}
+        {{ tables_shipment | safe }}
+      </table>
+    </div>
+
+    <!-- Tabel Hasil Forecast untuk Weight -->
+    <div id="results-weight" class="table-responsive mt-5" style="display:none;">
+      <h3 class="text-center">Forecast for Weight</h3>
+      <table class="table table-bordered table-striped table-hover">
+        {{ tables_weight | safe }}
       </table>
     </div>
 
     <!-- Menampilkan grafik Plotly -->
-    <div id="graph_container">
+    <div id="graph_container" class="graph-container">
       {{ graph_html | safe }}
     </div>
 
@@ -112,32 +135,38 @@
   </div>
 
   <script>
-    // JavaScript untuk update tabel berdasarkan growth
+    // Fungsi untuk memperbarui tipe forecast yang ditampilkan
+    function updateForecastType() {
+      const forecastType = document.getElementById("forecast-type").value;
+
+      if (forecastType === "shipment") {
+        document.getElementById("results-shipment").style.display = "block";
+        document.getElementById("results-weight").style.display = "none";
+      } else {
+        document.getElementById("results-shipment").style.display = "none";
+        document.getElementById("results-weight").style.display = "block";
+      }
+    }
+
+    // Menangani form submit untuk Update Growth
     $("#growth-form").submit(function(e) {
       e.preventDefault();  // Mencegah form submit default
       const growth = $("#growth").val();
 
       // AJAX untuk mengirim growth ke server
       $.post("/update-growth", { growth: growth }, function(data) {
-        // Pastikan data yang diterima mengandung updated_table dan graph_html untuk memperbarui konten
-        console.log(data);  // Debugging: cek apakah data sudah sesuai
-
+        // Update tabel dan grafik dengan hasil yang baru
         if (data.error) {
           alert("Error: " + data.error);
           return;
         }
 
-        // Update tabel hasil
-        $("#results").html(data.updated_table); // Perbarui tabel dengan updated_table yang baru
+        // Update tabel dan grafik sesuai dengan tipe yang dipilih
+        $("#results-shipment").html(data.updated_table_shipment);
+        $("#results-weight").html(data.updated_table_weight);
+        $('#graph_container').html(data.graph_html);
 
-        // Update grafik dengan HTML baru
-        $('#graph_container').html(data.graph_html);  // Gantikan konten grafik di container
-
-        // Jika data.graph_data ada, kita bisa menggunakan Plotly untuk memperbarui grafik dengan data tersebut
-        if (data.graph_data) {
-          // Pastikan data.graph_data ada dan valid
-          Plotly.react('graph_container', data.graph_data);
-        }
+        updateForecastType();  // Memperbarui tampilan berdasarkan pilihan
       }).fail(function(xhr) {
         alert("Error: " + xhr.status + " - " + xhr.statusText);
       });
@@ -147,36 +176,32 @@
     $("#actual-data-form").submit(function(e) {
       e.preventDefault();  // Mencegah pengiriman form default
 
-      // Ambil file data aktual
       const formData = new FormData();
-      const actualFile = $("#actual_data")[0].files[0];  // Mengubah ID menjadi 'actual_data'
+      const actualFile = $("#actual_data")[0].files[0];  // Mengambil file
       if (!actualFile) {
         alert("Please upload an actual data file.");
         return;
       }
-      formData.append("actual_data", actualFile);  // Mengirim dengan nama 'actual_data'
+      formData.append("actual_data", actualFile);  // Mengirim file actual_data
 
-      // Menampilkan loading spinner
-      $("#loading").show();
+      $("#loading").show();  // Menampilkan spinner loading
 
-      // Kirim data ke server
       $.ajax({
-        url: "/compare-forecast-actual",  // Gunakan endpoint baru untuk perbandingan
+        url: "/compare-forecast-actual",
         type: "POST",
         data: formData,
         processData: false,
         contentType: false,
         success: function(response) {
-          $("#loading").hide();  // Sembunyikan spinner
+          $("#loading").hide();  // Menyembunyikan spinner
           if (response.graph_html) {
-            // Perbarui grafik dengan HTML baru
             $("#graph_container").html(response.graph_html);
           } else {
             alert("Failed to update the graph. Please check your data.");
           }
         },
         error: function(xhr) {
-          $("#loading").hide();  // Sembunyikan spinner
+          $("#loading").hide();  // Menyembunyikan spinner
           alert("Error: " + xhr.status + " - " + xhr.statusText);
         }
       });
