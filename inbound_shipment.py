@@ -74,14 +74,10 @@ def analyze():
     except ValueError:
         return "Invalid input for year or days", 400
 
-    # Validasi kolom
-    required_columns = ['AREA', 'AREA 2', 'Destname', 'DATE', 'Cnote']
-    if not all(col in data.columns for col in required_columns):
-        return f"Missing required columns in the dataset ({', '.join(required_columns)}).", 400
-
     # Preprocessing data
-    data['ds'] = pd.to_datetime(data['DATE'])
-    data.rename(columns={"Cnote": "y"}, inplace=True)
+    data['DATE'] = pd.to_datetime(data['DATE'])
+    all_forecasting = data[data['DATE'] <= '2024-12-01']
+    all_forecasting = all_forecasting.rename(columns={"DATE": "ds", "Cnote": "y"})
 
     # Menambahkan event khusus
     events = pd.DataFrame({
@@ -91,92 +87,113 @@ def analyze():
         'upper_window': [days_after_event, days_after_event]
     })
 
-    # Fungsi untuk melakukan forecasting berdasarkan AREA, AREA 2, dan Destname
-    def forecast_by_area(data, events, year=2024):
-        results = {}
-        area_totals = {}
+    # Fungsi untuk melakukan forecasting per Destname
+    def forecast_per_destname(area, area2, destname_data, events, year):
+        dest_data = destname_data.groupby('ds').agg({"y": "sum"}).reset_index()
 
-        for area in data['AREA'].unique():
-            area_data = data[data['AREA'] == area]
-            area_forecast = pd.DataFrame()
+        if dest_data.empty:
+            return 0, None
 
-            for area2 in area_data['AREA 2'].unique():
-                area2_data = area_data[area_data['AREA 2'] == area2]
+        # Inisialisasi Prophet
+        model = Prophet(holidays=events, changepoint_prior_scale=0.1)
+        model.fit(dest_data)
 
-                for dest in area2_data['Destname'].unique():
-                    dest_data = area2_data[area2_data['Destname'] == dest]
-                    dest_data = dest_data.groupby('ds').agg({"y": "sum"}).reset_index()
+        # Forecast Desember
+        future = model.make_future_dataframe(periods=31)
+        forecast = model.predict(future)
 
-                    if dest_data.empty:
-                        continue
+        # Filter data Desember
+        december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
 
-                    model = Prophet(holidays=events, changepoint_prior_scale=0.1)
-                    model.fit(dest_data)
+        # Total forecast untuk Desember
+        total_forecast = december_forecast['yhat'].sum()
 
-                    future = model.make_future_dataframe(periods=31)
-                    forecast = model.predict(future)
+        return total_forecast, december_forecast
 
-                    # Filter forecast untuk Desember
-                    december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
+    # Forecasting per AREA, AREA 2, dan Destname
+    results = []
+    area_summary = []
+    for area in all_forecasting['AREA'].unique():
+        area_data = all_forecasting[all_forecasting['AREA'] == area]
+        total_area_nov = 0
+        total_area_dec = 0
 
-                    # Tambahkan hasil forecast ke area_forecast
-                    if not december_forecast.empty:
-                        december_forecast['Destname'] = dest
-                        december_forecast['AREA 2'] = area2
-                        december_forecast['AREA'] = area
-                        area_forecast = pd.concat([area_forecast, december_forecast])
+        for area2 in area_data['AREA 2'].unique():
+            area2_data = area_data[area_data['AREA 2'] == area2]
+            total_area2_nov = 0
+            total_area2_dec = 0
 
-            # Jika area_forecast tidak kosong, hitung total forecast per tanggal
-            if not area_forecast.empty:
-                total_forecast_per_date = area_forecast.groupby('ds')['yhat'].sum().reset_index()
-                area_totals[area] = total_forecast_per_date
-                results[area] = area_forecast
+            for destname in area2_data['Destname'].unique():
+                dest_data = area2_data[area2_data['Destname'] == destname]
+                total_forecast, _ = forecast_per_destname(area, area2, dest_data, events, year)
 
-        return results, area_totals
+                total_nov = dest_data[(dest_data['ds'] >= f"{year}-11-01") & (dest_data['ds'] <= f"{year}-11-30")]['y'].sum()
 
-    # Jalankan forecasting
-    breakdown_results, area_totals = forecast_by_area(data, events, year)
+                total_area2_nov += total_nov
+                total_area2_dec += total_forecast
 
-    # Format hasil ke dalam DataFrame untuk tabel
-    summary_data = []
-    for area, breakdown in breakdown_results.items():
-        for area2, area2_data in breakdown.groupby('AREA 2'):
-            for dest, dest_data in area2_data.groupby('Destname'):
-                total_forecast = dest_data['yhat'].sum()
-                summary_data.append({
+                results.append({
                     'AREA': area,
                     'AREA 2': area2,
-                    'Destname': dest,
-                    'Total Forecast (Desember)': f"{total_forecast:,.0f}"
+                    'Destname': destname,
+                    'November': total_nov,
+                    'Desember': total_forecast
                 })
 
-    result_df = pd.DataFrame(summary_data)
+            total_area_nov += total_area2_nov
+            total_area_dec += total_area2_dec
 
-    # Buat visualisasi grafik untuk total forecast per AREA
+        area_summary.append({
+            'AREA': area,
+            'November': total_area_nov,
+            'Desember': total_area_dec
+        })
+
+    # Konversi hasil ke DataFrame
+    breakdown_df = pd.DataFrame(results)
+    area_summary_df = pd.DataFrame(area_summary)
+
+    # Hitung Growth %
+    area_summary_df['Growth %'] = ((area_summary_df['Desember'] - area_summary_df['November']) / area_summary_df['November']) * 100
+    breakdown_df['Growth %'] = ((breakdown_df['Desember'] - breakdown_df['November']) / breakdown_df['November']) * 100
+
+    # Format angka agar lebih rapi
+    area_summary_df['November'] = area_summary_df['November'].apply(lambda x: f"{x:,.0f}")
+    area_summary_df['Desember'] = area_summary_df['Desember'].apply(lambda x: f"{x:,.0f}")
+    area_summary_df['Growth %'] = area_summary_df['Growth %'].apply(lambda x: f"{x:.2f}%")
+
+    breakdown_df['November'] = breakdown_df['November'].apply(lambda x: f"{x:,.0f}")
+    breakdown_df['Desember'] = breakdown_df['Desember'].apply(lambda x: f"{x:,.0f}")
+    breakdown_df['Growth %'] = breakdown_df['Growth %'].apply(lambda x: f"{x:.2f}%")
+
+    # Tampilkan hasil
+    area_table = area_summary_df.to_html(classes='table table-striped table-hover', index=False)
+    breakdown_table = breakdown_df.to_html(classes='table table-striped table-hover', index=False)
+
+    # Buat grafik berdasarkan AREA
     fig = go.Figure()
-
-    for area, totals in area_totals.items():
-        fig.add_trace(go.Scatter(
-            x=totals['ds'],
-            y=totals['yhat'],
-            mode='lines+markers',
-            name=area
+    for _, row in area_summary_df.iterrows():
+        fig.add_trace(go.Bar(
+            x=['November', 'Desember'],
+            y=[float(row['November'].replace(',', '')), float(row['Desember'].replace(',', ''))],
+            name=row['AREA']
         ))
 
     fig.update_layout(
-        title="Forecasted Shipments per AREA (Desember 2024)",
-        xaxis_title="Date",
-        yaxis_title="Forecasted Shipments",
-        legend_title="AREA"
+        title="Forecast Summary by AREA",
+        xaxis_title="Month",
+        yaxis_title="Shipments",
+        barmode='group'
     )
 
     graph_html = fig.to_html(full_html=False)
 
-    # Tampilkan hasil
-    return render_template('resultin.html',
-                           tables=[result_df.to_html(classes='table table-striped', index=False)],
-                           graph_html=graph_html)
-
+    return render_template(
+        'resultin.html',
+        area_table=area_table,
+        breakdown_table=breakdown_table,
+        graph_html=graph_html
+    )
 
 
 @app.route('/update-growth', methods=['POST'])

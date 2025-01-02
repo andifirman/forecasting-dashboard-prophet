@@ -50,15 +50,24 @@
   <div class="container mt-5">
     <h1 class="text-center mb-4">Forecast Results</h1>
 
-    <!-- Tabel Hasil Forecast -->
-    <div id="results" class="table-responsive">
-      <table class="table table-bordered table-striped table-hover">
-        {{ tables | safe }}
-      </table>
+    <!-- Tabel AREA -->
+    <div class="table-container">
+      <h3 class="text-center">Summary by AREA</h3>
+      <div id="area_table" class="table-responsive">
+        {{ area_table | safe }}
+      </div>
+    </div>
+
+    <!-- Tabel Breakdown -->
+    <div class="table-container">
+      <h3 class="text-center">Detailed Breakdown (AREA 2 and Destname)</h3>
+      <div id="breakdown_table" class="table-responsive">
+        {{ breakdown_table | safe }}
+      </div>
     </div>
 
     <!-- Menampilkan grafik Plotly -->
-    <div id="graph_container">
+    <div id="graph_container" class="graph-container">
       {{ graph_html | safe }}
     </div>
 
@@ -91,8 +100,6 @@
       </form>
     </div>
 
-    
-
     <!-- Tombol Download -->
     <div class="text-center mt-3">
       <a href="/download/forecast_results.csv" class="btn btn-primary">Download Results</a>
@@ -110,36 +117,27 @@
       </div>
       <p>Processing your data, please wait...</p>
     </div>
-
   </div>
 
   <script>
     // JavaScript untuk update tabel berdasarkan growth
     $("#growth-form").submit(function(e) {
-      e.preventDefault();  // Mencegah form submit default
+      e.preventDefault();
       const growth = $("#growth").val();
 
       // AJAX untuk mengirim growth ke server
       $.post("/update-growth", { growth: growth }, function(data) {
-        // Pastikan data yang diterima mengandung updated_table dan graph_html untuk memperbarui konten
-        console.log(data);  // Debugging: cek apakah data sudah sesuai
-
         if (data.error) {
           alert("Error: " + data.error);
           return;
         }
 
         // Update tabel hasil
-        $("#results").html(data.updated_table); // Perbarui tabel dengan updated_table yang baru
+        $("#area_table").html(data.area_table);
+        $("#breakdown_table").html(data.breakdown_table);
 
         // Update grafik dengan HTML baru
-        $('#graph_container').html(data.graph_html);  // Gantikan konten grafik di container
-
-        // Jika data.graph_data ada, kita bisa menggunakan Plotly untuk memperbarui grafik dengan data tersebut
-        if (data.graph_data) {
-          // Pastikan data.graph_data ada dan valid
-          Plotly.react('graph_container', data.graph_data);
-        }
+        $('#graph_container').html(data.graph_html);
       }).fail(function(xhr) {
         alert("Error: " + xhr.status + " - " + xhr.statusText);
       });
@@ -147,43 +145,37 @@
 
     // JavaScript untuk Upload Data Aktual
     $("#actual-data-form").submit(function(e) {
-      e.preventDefault();  // Mencegah pengiriman form default
-
-      // Ambil file data aktual
+      e.preventDefault();
       const formData = new FormData();
-      const actualFile = $("#actual_data")[0].files[0];  // Mengubah ID menjadi 'actual_data'
+      const actualFile = $("#actual_data")[0].files[0];
       if (!actualFile) {
         alert("Please upload an actual data file.");
         return;
       }
-      formData.append("actual_data", actualFile);  // Mengirim dengan nama 'actual_data'
+      formData.append("actual_data", actualFile);
 
-      // Menampilkan loading spinner
       $("#loading").show();
 
-      // Kirim data ke server
       $.ajax({
-        url: "/compare-forecast-actual",  // Gunakan endpoint baru untuk perbandingan
+        url: "/compare-forecast-actual",
         type: "POST",
         data: formData,
         processData: false,
         contentType: false,
         success: function(response) {
-          $("#loading").hide();  // Sembunyikan spinner
+          $("#loading").hide();
           if (response.graph_html) {
-            // Perbarui grafik dengan HTML baru
             $("#graph_container").html(response.graph_html);
           } else {
             alert("Failed to update the graph. Please check your data.");
           }
         },
         error: function(xhr) {
-          $("#loading").hide();  // Sembunyikan spinner
+          $("#loading").hide();
           alert("Error: " + xhr.status + " - " + xhr.statusText);
         }
       });
     });
   </script>
-
 </body>
 </html>
