@@ -49,227 +49,405 @@ def adjust_growth_decimal(value):
     return value
 
 
+
+
+# --- 1. Fungsi Forecasting yang Telah Digabungkan ---
+
+def forecast_group(group_data, events, periods=31):
+    """
+    Melakukan forecasting menggunakan Prophet untuk data yang diberikan.
+    
+    Parameters:
+    - group_data: DataFrame dengan kolom 'ds' dan 'y'.
+    - events: DataFrame events untuk Prophet.
+    - periods: Jumlah hari ke depan untuk forecasting.
+    
+    Returns:
+    - DataFrame hasil forecast dengan kolom tambahan 'week'.
+    """
+    # Inisialisasi dan melatih model Prophet
+    model = Prophet(holidays=events, changepoint_prior_scale=0.1)
+    model.fit(group_data)
+    
+    # Membuat dataframe future
+    future = model.make_future_dataframe(periods=periods)
+    forecast = model.predict(future)
+    
+    # Tambahkan kolom 'week' untuk identifikasi mingguan
+    forecast['week'] = forecast['ds'].dt.isocalendar().week
+    
+    # Proses setiap minggu untuk menyesuaikan jika ada event
+    for week, group in forecast.groupby('week'):
+        # Identifikasi nilai tertinggi dan tanggalnya
+        highest_value = group['yhat'].max()
+        highest_dates = group[group['yhat'] == highest_value]['ds']
+        
+        # Cari nilai tertinggi kedua
+        second_highest_value = group[group['yhat'] < highest_value]['yhat'].max()
+        
+        # Cek apakah ada event di minggu ini
+        for event_date in events['ds']:
+            if pd.to_datetime(event_date).isocalendar().week == week:
+                event_date_dt = pd.to_datetime(event_date)
+                if event_date_dt in forecast['ds'].values:
+                    # Set nilai tertinggi ke tanggal event
+                    forecast.loc[forecast['ds'] == event_date_dt, 'yhat'] = highest_value
+                    
+                    # Update nilai tertinggi sebelumnya menjadi nilai tertinggi kedua
+                    if pd.notnull(second_highest_value):
+                        for date in highest_dates:
+                            if date != event_date_dt:
+                                forecast.loc[forecast['ds'] == date, 'yhat'] = second_highest_value
+                    
+                    # Turunkan nilai H+1 sebesar 2%
+                    next_day = event_date_dt + pd.Timedelta(days=1)
+                    if next_day in forecast['ds'].values:
+                        h1_value = highest_value * 0.98  # Turunkan 2%
+                        forecast.loc[forecast['ds'] == next_day, 'yhat'] = min(
+                            h1_value, forecast.loc[forecast['ds'] == next_day, 'yhat'].values[0]
+                        )
+    
+    # Filter data untuk bulan Desember
+    december_forecast = forecast[(forecast['ds'] >= f"{events['ds'].dt.year.unique()[0]}-12-01") & 
+                                 (forecast['ds'] <= f"{events['ds'].dt.year.unique()[0]}-12-31")]
+    
+    # Kembalikan dataframe forecast Desember
+    return december_forecast
+
+def forecast_per_area_area2_destname(shipment_forecasting, events):
+    """
+    Melakukan forecasting per kombinasi AREA, AREA 2, dan Destname.
+    
+    Returns:
+    - DataFrame gabungan forecast per AREA, AREA 2, Destname.
+    """
+    # Rename columns for Prophet
+    shipment_forecasting_group = shipment_forecasting.rename(columns={"DATE": "ds", "Cnote": "y"})
+    
+    # Mendapatkan unique combinations
+    combinations = shipment_forecasting_group[['AREA', 'AREA 2', 'Destname']].drop_duplicates()
+    
+    december_forecasts = {}
+    
+    for idx, row in combinations.iterrows():
+        area = row['AREA']
+        area2 = row['AREA 2']
+        destname = row['Destname']
+        
+        # Filter data per kombinasi
+        group_data = shipment_forecasting_group[
+            (shipment_forecasting_group['AREA'] == area) &
+            (shipment_forecasting_group['AREA 2'] == area2) &
+            (shipment_forecasting_group['Destname'] == destname)
+        ]
+        
+        # Group dan sum 'y' per tanggal
+        group_data = group_data.groupby('ds').agg({"y": "sum"}).reset_index()
+        
+        # Forecast
+        december_forecast = forecast_group(group_data, events)
+        
+        # Tambahkan informasi grup
+        december_forecast['AREA'] = area
+        december_forecast['AREA 2'] = area2
+        december_forecast['Destname'] = destname
+        
+        # Simpan ke dictionary
+        key = (area, area2, destname)
+        december_forecasts[key] = december_forecast
+    
+    # Gabungkan semua forecast
+    forecast_data = pd.DataFrame()
+    for key, df in december_forecasts.items():
+        forecast_data = pd.concat([forecast_data, df], ignore_index=True)
+    
+    # Format hasil agar lebih rapi
+    forecast_data['Forecasted Shipments'] = forecast_data['yhat'].apply(lambda x: round(x))
+    forecast_data = forecast_data.rename(columns={'ds': 'Date'})
+    
+    return forecast_data
+
+def forecast_per_area(shipment_forecasting, events):
+    """
+    Melakukan forecasting per AREA dengan mengagregasi data dari AREA 2 dan Destname.
+    
+    Returns:
+    - DataFrame gabungan forecast per AREA.
+    """
+    # Rename columns for Prophet
+    shipment_forecasting_area = shipment_forecasting.rename(columns={"DATE": "ds", "Cnote": "y"})
+    
+    # Mendapatkan unique AREA
+    areas = shipment_forecasting_area['AREA'].unique()
+    
+    december_forecasts = {}
+    
+    for area in areas:
+        # Filter data per AREA
+        area_data = shipment_forecasting_area[shipment_forecasting_area['AREA'] == area]
+        
+        # Group dan sum 'y' per tanggal
+        area_data = area_data.groupby('ds').agg({"y": "sum"}).reset_index()
+        
+        # Forecast
+        december_forecast = forecast_group(area_data, events)
+        
+        # Tambahkan informasi AREA
+        december_forecast['AREA'] = area
+        december_forecast['AREA 2'] = None
+        december_forecast['Destname'] = None
+        
+        # Simpan ke dictionary
+        december_forecasts[area] = december_forecast
+    
+    # Gabungkan semua forecast
+    forecast_data = pd.DataFrame()
+    for area, df in december_forecasts.items():
+        forecast_data = pd.concat([forecast_data, df], ignore_index=True)
+    
+    # Format hasil agar lebih rapi
+    forecast_data['Forecasted Shipments'] = forecast_data['yhat'].apply(lambda x: round(x))
+    forecast_data = forecast_data.rename(columns={'ds': 'Date'})
+    
+    return forecast_data
+
+
+
+
+# --- 3. Endpoint /analyze yang Dimodifikasi ---
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    global result_df, base_forecast_df, forecast_data, total_december_forecast
-
-    # Proses file upload
-    if 'file' not in request.files:
-        return "No file uploaded", 400
-    file = request.files['file']
-    if file.filename == '':
-        return "No file selected", 400
-
-    # Membaca file CSV/Excel
     try:
-        if file.filename.endswith('.csv'):
-            data = pd.read_csv(file)
-        elif file.filename.endswith('.xlsx'):
-            data = pd.read_excel(file)
-        else:
-            return "Invalid file format. Please upload a CSV or Excel file.", 400
-    except Exception as e:
-        return f"Error reading file: {e}", 400
+        # --- 3.1. Proses File Upload ---
+        if 'file' not in request.files:
+            return "No file uploaded", 400
+        file = request.files['file']
+        if file.filename == '':
+            return "No file selected", 400
 
-    # Ambil input dari user
-    try:
-        year = int(request.form['year'])  # Tahun dari input pengguna
-        days_before_event = int(request.form['days_before_event'])
-        days_after_event = int(request.form['days_after_event'])
-    except ValueError:
-        return "Invalid input for year or days", 400
+        # Membaca file CSV/Excel
+        try:
+            if file.filename.endswith('.csv'):
+                data = pd.read_csv(file)
+            elif file.filename.endswith('.xlsx'):
+                data = pd.read_excel(file)
+            else:
+                return "Invalid file format. Please upload a CSV or Excel file.", 400
+        except Exception as e:
+            return f"Error reading file: {e}", 400
 
-    # Preprocessing data
-    data['DATE'] = pd.to_datetime(data['DATE'])
-    all_forecasting = data[data['DATE'] <= '2024-12-01']
-    all_forecasting = all_forecasting.rename(columns={"DATE": "ds", "Cnote": "y"})
+        # --- 3.2. Ambil Input dari User ---
+        try:
+            year = int(request.form['year'])  # Tahun dari input pengguna
+            days_before_event = int(request.form['days_before_event'])
+            days_after_event = int(request.form['days_after_event'])
+        except (ValueError, KeyError):
+            return "Invalid input for year or days", 400
 
-    # Menambahkan event khusus
-    events = pd.DataFrame({
-        'holiday': ['12.12', 'Hari Raya Natal'],
-        'ds': [f"{year}-12-12", f"{year}-12-25"],
-        'lower_window': [-days_before_event, -days_before_event],
-        'upper_window': [days_after_event, days_after_event]
-    })
+        # --- 3.3. Preprocessing Data ---
+        data['DATE'] = pd.to_datetime(data['DATE'])
+        shipment_forecasting = data[data['DATE'] <= f'{year}-12-01']
+        shipment_forecasting = shipment_forecasting.rename(columns={"DATE": "ds", "Cnote": "y"})
 
-    # Fungsi untuk melakukan forecasting per Destname
-    def forecast_per_destname(area, area2, destname_data, events, year):
-        dest_data = destname_data.groupby('ds').agg({"y": "sum"}).reset_index()
-
-        if dest_data.empty:
-            return 0, None
-
-        # Inisialisasi Prophet
-        model = Prophet(holidays=events, changepoint_prior_scale=0.1)
-        model.fit(dest_data)
-
-        # Forecast Desember
-        future = model.make_future_dataframe(periods=31)
-        forecast = model.predict(future)
-
-        # Filter data Desember
-        december_forecast = forecast[(forecast['ds'] >= f"{year}-12-01") & (forecast['ds'] <= f"{year}-12-31")]
-
-        # Total forecast untuk Desember
-        total_forecast = december_forecast['yhat'].sum()
-
-        return total_forecast, december_forecast
-
-    # Forecasting per AREA, AREA 2, dan Destname
-    results = []
-    area_summary = []
-    all_forecast_data = []
-
-    # Fungsi untuk menyesuaikan growth dan menambah angka acak pada desimal
-    def adjust_forecast_growth(november, december):
-        growth_percentage = ((december - november) / november) * 100
-        
-        # Cek apakah growth lebih kecil dari -5%
-        if growth_percentage < -5.00:
-            growth_percentage = -5.00
-            # Sesuaikan Desember untuk menyesuaikan growth di -5%
-            december = november * (1 + growth_percentage / 100)
-        
-        # Tambahkan angka acak di belakang koma menggunakan fungsi replace_negative_with_random
-        random_decimal = replace_negative_with_random([0])[0] / 100  # Hanya mengambil nilai pertama, acak antara 5-32
-        december = round(december + random_decimal, 2)
-
-        # Adjust decimal part of growth if it's exactly -5.00%
-        growth_percentage = adjust_growth_decimal(growth_percentage)
-
-        return december, growth_percentage
-
-    for area in all_forecasting['AREA'].unique():
-        area_data = all_forecasting[all_forecasting['AREA'] == area]
-        total_area_nov = 0
-        total_area_dec = 0
-
-        for area2 in area_data['AREA 2'].unique():
-            area2_data = area_data[area_data['AREA 2'] == area2]
-            total_area2_nov = 0
-            total_area2_dec = 0
-
-            for destname in area2_data['Destname'].unique():
-                dest_data = area2_data[area2_data['Destname'] == destname]
-                total_forecast, december_forecast = forecast_per_destname(area, area2, dest_data, events, year)
-
-                total_nov = dest_data[(dest_data['ds'] >= f"{year}-11-01") & (dest_data['ds'] <= f"{year}-11-30")]['y'].sum()
-
-                total_area2_nov += total_nov
-                total_area2_dec += total_forecast
-
-                # Sesuaikan Growth % dan forecast
-                adjusted_december, adjusted_growth = adjust_forecast_growth(total_nov, total_forecast)
-
-                results.append({
-                    'AREA': area,
-                    'AREA 2': area2,
-                    'Destname': destname,
-                    'November': total_nov,
-                    'Desember': adjusted_december,
-                    'Growth %': adjusted_growth  # Menambahkan nilai Growth % langsung di sini
-                })
-
-                if december_forecast is not None:
-                    december_forecast['AREA'] = area
-                    december_forecast['Destname'] = destname
-                    all_forecast_data.append(december_forecast)
-
-            total_area_nov += total_area2_nov
-            total_area_dec += total_area2_dec
-
-        area_summary.append({
-            'AREA': area,
-            'November': total_area_nov,
-            'Desember': total_area_dec
+        # --- 3.4. Menambahkan Event Khusus ---
+        events = pd.DataFrame({
+            'holiday': ['12.12', 'Hari Raya Natal'],
+            'ds': [f"{year}-12-12", f"{year}-12-25"],
+            'lower_window': [-days_before_event, -days_before_event],  # Hari sebelum event
+            'upper_window': [days_after_event, days_after_event]      # Hari setelah event
         })
 
-    # Konversi hasil ke DataFrame
-    breakdown_df = pd.DataFrame(results)
-    area_summary_df = pd.DataFrame(area_summary)
-    forecast_data_df = pd.concat(all_forecast_data, ignore_index=True)
+        # --- 3.5. Forecasting per Group dan per AREA ---
+        # Forecast per AREA, AREA 2, Destname
+        forecast_per_group = forecast_per_area_area2_destname(data, events)
+        
+        # Forecast per AREA
+        forecast_per_area_df = forecast_per_area(data, events)
+        
+        # --- 3.6. Menggabungkan Hasil Forecasting ---
+        # Forecast per Group
+        forecast_per_group_grouped = forecast_per_group.groupby(['AREA', 'AREA 2', 'Destname'])['Forecasted Shipments'].sum().reset_index()
+        
+        # Forecast per AREA
+        forecast_per_area_grouped = forecast_per_area_df.groupby('AREA')['Forecasted Shipments'].sum().reset_index()
+        
+        # --- 3.7. Mengambil Data November ---
+        november_data_group = data[
+            (data['DATE'] >= f"{year}-11-01") & 
+            (data['DATE'] <= f"{year}-11-30")
+        ].groupby(['AREA', 'AREA 2', 'Destname'])['Cnote'].sum().reset_index()
+        
+        november_data_area = data[
+            (data['DATE'] >= f"{year}-11-01") & 
+            (data['DATE'] <= f"{year}-11-30")
+        ].groupby(['AREA'])['Cnote'].sum().reset_index()
 
-    # Hitung Growth % untuk area_summary_df
-    area_summary_df['Growth %'] = ((area_summary_df['Desember'] - area_summary_df['November']) / area_summary_df['November']) * 100
+        # --- 3.8. Menggabungkan Data November dan Forecast Desember per Group ---
+        result_df_group = pd.merge(november_data_group, forecast_per_group_grouped, on=['AREA', 'AREA 2', 'Destname'], how='left')
+        result_df_group = result_df_group.rename(columns={'Cnote': 'November', 'Forecasted Shipments': 'Desember'})
+        
+        # Hitung Growth %
+        result_df_group['Growth %'] = ((result_df_group['Desember'] - result_df_group['November']) / result_df_group['November']) * 100
+        
+        # --- 3.9. Menggabungkan Data November dan Forecast Desember per AREA ---
+        result_df_area = pd.merge(november_data_area, forecast_per_area_grouped, on='AREA', how='left')
+        result_df_area = result_df_area.rename(columns={'Cnote': 'November', 'Forecasted Shipments': 'Desember'})
+        
+        # Hitung Growth %
+        result_df_area['Growth %'] = ((result_df_area['Desember'] - result_df_area['November']) / result_df_area['November']) * 100
+        
+        # --- 3.10. Penyesuaian Growth % dan Forecast ---
+        # Fungsi untuk menyesuaikan growth dan menambah angka acak pada desimal
+        def adjust_forecast_growth(november, december):
+            if november == 0:
+                growth_percentage = 0
+            else:
+                growth_percentage = ((december - november) / november) * 100
+            
+            # Cek apakah growth lebih kecil dari -5%
+            if growth_percentage < -5.00:
+                growth_percentage = -5.00
+                # Sesuaikan Desember untuk menyesuaikan growth di -5%
+                december = november * (1 + growth_percentage / 100)
+            
+            # Tambahkan angka acak di belakang koma menggunakan fungsi replace_negative_with_random
+            random_decimal = replace_negative_with_random([0])[0] / 100  # Hanya mengambil nilai pertama, acak antara 5-32
+            december = round(december + random_decimal, 2)
+    
+            # Adjust decimal part of growth if it's exactly -5.00%
+            growth_percentage = adjust_growth_decimal(growth_percentage)
+    
+            return december, growth_percentage
 
-    # Format angka agar lebih rapi
-    area_summary_df['November'] = area_summary_df['November'].apply(lambda x: f"{x:,.0f}")
-    area_summary_df['Desember'] = area_summary_df['Desember'].apply(lambda x: f"{x:,.0f}")
-    area_summary_df['Growth %'] = area_summary_df['Growth %'].apply(lambda x: f"{x:.2f}%")
-
-    breakdown_df['November'] = breakdown_df['November'].apply(lambda x: f"{x:,.0f}")
-    breakdown_df['Desember'] = breakdown_df['Desember'].apply(lambda x: f"{x:,.0f}")
-    breakdown_df['Growth %'] = breakdown_df['Growth %'].apply(lambda x: f"{x:.2f}%")
-
-    # Tampilkan hasil
-    area_table = area_summary_df.to_html(classes='table table-striped table-hover', index=False)
-    breakdown_table = breakdown_df.to_html(classes='table table-striped table-hover', index=False)
-
-    # Buat grafik berdasarkan AREA dengan dropdown menu
-    fig = go.Figure()
-
-    # Data untuk All AREA
-    all_area_data = forecast_data_df.groupby('ds')['yhat'].sum().reset_index()
-    fig.add_trace(go.Scatter(
-        x=all_area_data['ds'],
-        y=all_area_data['yhat'],
-        mode='lines+markers',
-        name='All Areas',
-        visible=True
-    ))
-
-    # Data untuk masing-masing AREA
-    for area in area_summary_df['AREA']:
-        area_data = forecast_data_df[forecast_data_df['AREA'] == area].groupby('ds')['yhat'].sum().reset_index()
+        # Terapkan penyesuaian pada result_df_group
+        result_df_group[['Desember', 'Growth %']] = result_df_group.apply(
+            lambda row: pd.Series(adjust_forecast_growth(row['November'], row['Desember'])), axis=1
+        )
+        
+        # Terapkan penyesuaian pada result_df_area
+        result_df_area[['Desember', 'Growth %']] = result_df_area.apply(
+            lambda row: pd.Series(adjust_forecast_growth(row['November'], row['Desember'])), axis=1
+        )
+        
+        # --- 3.11. Format Angka Agar Lebih Rapi ---
+        # Format untuk Group
+        result_df_group['November'] = result_df_group['November'].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+        result_df_group['Desember'] = result_df_group['Desember'].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+        result_df_group['Growth %'] = result_df_group['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
+        
+        # Format untuk AREA
+        result_df_area['November'] = result_df_area['November'].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+        result_df_area['Desember'] = result_df_area['Desember'].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+        result_df_area['Growth %'] = result_df_area['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
+        
+        # --- 3.12. Membuat Tabel HTML ---
+        area_table = result_df_area.to_html(classes='table table-striped table-hover', index=False)
+        breakdown_table = result_df_group.to_html(classes='table table-striped table-hover', index=False)
+        
+        # --- 3.13. Membuat Visualisasi Line Graph Berdasarkan Tanggal dan AREA ---
+        fig = go.Figure()
+        
+        # Data untuk All AREA
+        all_area_data = forecast_per_area_df.groupby('Date')['Forecasted Shipments'].sum().reset_index()
         fig.add_trace(go.Scatter(
-            x=area_data['ds'],
-            y=area_data['yhat'],
+            x=all_area_data['Date'],
+            y=all_area_data['Forecasted Shipments'],
             mode='lines+markers',
-            name=area,
-            visible=False
+            name='All Areas',
+            visible=True
         ))
-
-    # Dropdown menu
-    buttons = []
-    buttons.append(dict(label='All Areas',
-                        method='update',
-                        args=[{'visible': [True] + [False] * len(area_summary_df['AREA'])},
-                              {'title': "Forecast Summary for All Areas"}]))
-
-    for i, area in enumerate(area_summary_df['AREA']):
-        visibility = [False] * (len(area_summary_df['AREA']) + 1)
-        visibility[i + 1] = True
-        buttons.append(dict(label=area,
+        
+        # Data untuk masing-masing AREA
+        for area in result_df_area['AREA']:
+            if area == 'Total':
+                continue  # Skip total if exists
+            area_data = forecast_per_area_df[forecast_per_area_df['AREA'] == area].groupby('Date')['Forecasted Shipments'].sum().reset_index()
+            fig.add_trace(go.Scatter(
+                x=area_data['Date'],
+                y=area_data['Forecasted Shipments'],
+                mode='lines+markers',
+                name=area,
+                visible=False
+            ))
+        
+        # Dropdown menu
+        buttons = []
+        buttons.append(dict(label='All Areas',
                             method='update',
-                            args=[{'visible': visibility},
-                                  {'title': f"Forecast Summary for {area}"}]))
-
-    fig.update_layout(
-        updatemenus=[dict(
-            active=0,
-            buttons=buttons,
-            x=0.5,
-            xanchor='center',
-            y=1.15,
-            yanchor='top'
-        )],
-        title="Forecast Summary by AREA",
-        xaxis_title="Date",
-        yaxis_title="Forecasted Shipments",
-        legend_title="AREA",
-        uniformtext_minsize=10,
-        uniformtext_mode='hide',
-        yaxis=dict(tickformat=',.0f')
-    )
-
-    graph_html = fig.to_html(full_html=False)
-
-    return render_template(
-        'resultin.html',
-        area_table=area_table,
-        breakdown_table=breakdown_table,
-        graph_html=graph_html
-    )
+                            args=[{'visible': [True] + [False] * (len(result_df_area['AREA']) - 1)},
+                                  {'title': "Forecast Summary for All Areas"}]))
+        
+        for i, area in enumerate(result_df_area['AREA']):
+            visibility = [False] * (len(result_df_area['AREA']))
+            visibility[i] = True
+            buttons.append(dict(label=area,
+                                method='update',
+                                args=[{'visible': visibility},
+                                      {'title': f"Forecast Summary for {area}"}]))
+        
+        fig.update_layout(
+            updatemenus=[dict(
+                active=0,
+                buttons=buttons,
+                x=0.5,
+                xanchor='center',
+                y=1.15,
+                yanchor='top'
+            )],
+            title="Forecast Summary by AREA",
+            xaxis_title="Date",
+            yaxis_title="Forecasted Shipments",
+            legend_title="AREA",
+            uniformtext_minsize=10,
+            uniformtext_mode='hide',
+            yaxis=dict(tickformat=',.0f')
+        )
+        
+        graph_html = fig.to_html(full_html=False)
+        
+        # --- 3.14. Menambahkan Baris Total ---
+        # Hitung total November dan Desember untuk AREA
+        total_november = data[
+            (data['DATE'] >= f"{year}-11-01") & 
+            (data['DATE'] <= f"{year}-11-30")
+        ]['Cnote'].sum()
+        total_desember = forecast_per_area_grouped['Forecasted Shipments'].sum()
+        
+        # Hitung Growth % untuk total
+        if total_november != 0:
+            total_growth = ((total_desember - total_november) / total_november) * 100
+        else:
+            total_growth = None
+        
+        # Buat DataFrame untuk total
+        total_row = pd.DataFrame({
+            'AREA': ['Total'],
+            'November': [total_november],
+            'Desember': [total_desember],
+            'Growth %': [total_growth]
+        })
+        
+        # Format angka untuk total_row
+        total_row['November'] = total_row['November'].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+        total_row['Desember'] = total_row['Desember'].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+        total_row['Growth %'] = total_row['Growth %'].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "N/A")
+        
+        # Gabungkan dengan result_df_area
+        result_df_area = pd.concat([result_df_area, total_row], ignore_index=True)
+        
+        # Update area_table dengan total
+        area_table = result_df_area.to_html(classes='table table-striped table-hover', index=False)
+        
+        # --- 3.15. Render Template dengan Hasil ---
+        return render_template(
+            'resultin.html',
+            area_table=area_table,
+            breakdown_table=breakdown_table,
+            graph_html=graph_html
+        )
+    
+    except Exception as e:
+        return f"An error occurred: {e}", 500
 
 
 
